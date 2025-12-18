@@ -38,7 +38,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	gwcapi "github.com/tv2-oss/bifrost-gateway-controller/apis/gateway.tv2.dk/v1alpha1"
+	gwcapi "github.com/tv2/bifrost-gateway-controller/apis/gateway.tv2.dk/v1alpha1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/yaml"
 	gatewayapi "sigs.k8s.io/gateway-api/apis/v1"
@@ -50,7 +50,7 @@ kind: GatewayClass
 metadata:
   name: cloud-gw
 spec:
-  controllerName: "github.com/tv2-oss/bifrost-gateway-controller"
+  controllerName: "github.com/tv2/bifrost-gateway-controller"
   parametersRef:
     group: gateway.tv2.dk
     kind: GatewayClassBlueprint
@@ -62,7 +62,7 @@ kind: GatewayClass
 metadata:
   name: cloud-gw-invalid
 spec:
-  controllerName: "github.com/tv2-oss/bifrost-gateway-controller"`
+  controllerName: "github.com/tv2/bifrost-gateway-controller"`
 
 const gatewayclassManifestNotOurs string = `
 apiVersion: gateway.networking.k8s.io/v1beta1

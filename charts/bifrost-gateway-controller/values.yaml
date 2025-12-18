@@ -2,7 +2,7 @@
 
 controller:
   image:
-    repository: ghcr.io/tv2-oss
+    repository: ghcr.io/tv2
     name: bifrost-gateway-controller
     # -- Image tag. Defaults to `.Chart.appVersion`
     tag: ""

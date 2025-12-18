@@ -37,7 +37,7 @@ import (
 	"testing"
 	"time"
 
-	gcapi "github.com/tv2-oss/bifrost-gateway-controller/apis/gateway.tv2.dk/v1alpha1"
+	gcapi "github.com/tv2/bifrost-gateway-controller/apis/gateway.tv2.dk/v1alpha1"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"

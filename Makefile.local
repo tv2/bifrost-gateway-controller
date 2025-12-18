@@ -79,7 +79,7 @@ undeploy-istio:
 #################
 .PHONY: cluster-load-controller-image
 cluster-load-controller-image:
-	kind load docker-image ghcr.io/tv2-oss/bifrost-gateway-controller:latest --name kind-gwc-dev-cluster
+	kind load docker-image ghcr.io/tv2/bifrost-gateway-controller:latest --name kind-gwc-dev-cluster
 
 #################
 .PHONY: deploy-etcd
@@ -213,7 +213,7 @@ BIFROST_VERSION ?= 0.1.6
 
 .PHONY: deploy-controller-helm
 deploy-controller-helm:
-	helm upgrade -i bifrost-gateway-controller-helm oci://ghcr.io/tv2-oss/bifrost-gateway-controller-helm --version ${BIFROST_VERSION} --values charts/bifrost-gateway-controller/ci/gatewayclassblueprint-contour-istio-values.yaml -n bifrost-gateway-controller-system --create-namespace
+	helm upgrade -i bifrost-gateway-controller-helm oci://ghcr.io/tv2/bifrost-gateway-controller-helm --version ${BIFROST_VERSION} --values charts/bifrost-gateway-controller/ci/gatewayclassblueprint-contour-istio-values.yaml -n bifrost-gateway-controller-system --create-namespace
 
 .PHONY: deploy-controller-local-helm
 deploy-controller-local-helm:
@@ -221,7 +221,7 @@ deploy-controller-local-helm:
 
 .PHONY: deploy-controller-aws-helm
 deploy-controller-aws-helm:
-	helm upgrade -i bifrost-gateway-controller-helm oci://ghcr.io/tv2-oss/bifrost-gateway-controller-helm --version ${BIFROST_VERSION} --values charts/bifrost-gateway-controller/ci/gatewayclassblueprint-crossplane-aws-alb-values.yaml -n bifrost-gateway-controller-system --create-namespace
+	helm upgrade -i bifrost-gateway-controller-helm oci://ghcr.io/tv2/bifrost-gateway-controller-helm --version ${BIFROST_VERSION} --values charts/bifrost-gateway-controller/ci/gatewayclassblueprint-crossplane-aws-alb-values.yaml -n bifrost-gateway-controller-system --create-namespace
 
 .PHONY: undeploy-controller-helm
 undeploy-controller-helm:
@@ -232,8 +232,8 @@ BIFROST_BLUEPRINTS_VERSION ?= 0.0.21
 
 .PHONY: deploy-controller-blueprint
 setup-getting-started-controller-blueprint:
-	kubectl apply -f https://github.com/tv2-oss/bifrost-gateway-controller/releases/download/${BIFROST_BLUEPRINTS_VERSION}/gatewayclassblueprint-contour-istio-cert.yaml
-	kubectl apply -f https://github.com/tv2-oss/bifrost-gateway-controller/releases/download/${BIFROST_BLUEPRINTS_VERSION}/gatewayclass-contour-istio-cert.yaml
+	kubectl apply -f https://github.com/tv2/bifrost-gateway-controller/releases/download/${BIFROST_BLUEPRINTS_VERSION}/gatewayclassblueprint-contour-istio-cert.yaml
+	kubectl apply -f https://github.com/tv2/bifrost-gateway-controller/releases/download/${BIFROST_BLUEPRINTS_VERSION}/gatewayclass-contour-istio-cert.yaml
 
 .PHONY: deploy-controller-blueprint-local
 deploy-controller-blueprint-local:
@@ -241,13 +241,13 @@ deploy-controller-blueprint-local:
 
 .PHONY: deploy-aws-istio-blueprint
 deploy-aws-istio-blueprint:
-	kubectl apply -f https://github.com/tv2-oss/bifrost-gateway-controller/releases/download/${BIFROST_BLUEPRINTS_VERSION}/gatewayclassblueprint-aws-alb-crossplane.yaml
-	kubectl apply -f https://github.com/tv2-oss/bifrost-gateway-controller/releases/download/${BIFROST_BLUEPRINTS_VERSION}/gatewayclass-aws-alb-crossplane.yaml
+	kubectl apply -f https://github.com/tv2/bifrost-gateway-controller/releases/download/${BIFROST_BLUEPRINTS_VERSION}/gatewayclassblueprint-aws-alb-crossplane.yaml
+	kubectl apply -f https://github.com/tv2/bifrost-gateway-controller/releases/download/${BIFROST_BLUEPRINTS_VERSION}/gatewayclass-aws-alb-crossplane.yaml
 
 .PHONY: undeploy-aws-istio-blueprint
 undeploy-aws-istio-blueprint:
-	kubectl delete -f https://github.com/tv2-oss/bifrost-gateway-controller/releases/download/${BIFROST_BLUEPRINTS_VERSION}/gatewayclassblueprint-aws-alb-crossplane.yaml
-	kubectl delete -f https://github.com/tv2-oss/bifrost-gateway-controller/releases/download/${BIFROST_BLUEPRINTS_VERSION}/gatewayclass-aws-alb-crossplane.yaml
+	kubectl delete -f https://github.com/tv2/bifrost-gateway-controller/releases/download/${BIFROST_BLUEPRINTS_VERSION}/gatewayclassblueprint-aws-alb-crossplane.yaml
+	kubectl delete -f https://github.com/tv2/bifrost-gateway-controller/releases/download/${BIFROST_BLUEPRINTS_VERSION}/gatewayclass-aws-alb-crossplane.yaml
 
 .PHONY: deploy-aws-istio-blueprint-local
 deploy-aws-istio-blueprint-local:

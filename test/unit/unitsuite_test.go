@@ -36,7 +36,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/tv2-oss/bifrost-gateway-controller/test/unit/tests"
+	"github.com/tv2/bifrost-gateway-controller/test/unit/tests"
 
 	"sigs.k8s.io/gateway-api/apis/v1alpha2"
 	"sigs.k8s.io/gateway-api/apis/v1beta1"

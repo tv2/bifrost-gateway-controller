@@ -52,8 +52,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayapi "sigs.k8s.io/gateway-api/apis/v1"
 
-	gwcapi "github.com/tv2-oss/bifrost-gateway-controller/apis/gateway.tv2.dk/v1alpha1"
-	selfapi "github.com/tv2-oss/bifrost-gateway-controller/pkg/api"
+	gwcapi "github.com/tv2/bifrost-gateway-controller/apis/gateway.tv2.dk/v1alpha1"
+	selfapi "github.com/tv2/bifrost-gateway-controller/pkg/api"
 )
 
 const gatewayclassManifest string = `
@@ -62,7 +62,7 @@ kind: GatewayClass
 metadata:
   name: cloud-gw
 spec:
-  controllerName: "github.com/tv2-oss/bifrost-gateway-controller"
+  controllerName: "github.com/tv2/bifrost-gateway-controller"
   parametersRef:
     group: gateway.tv2.dk
     kind: GatewayClassBlueprint

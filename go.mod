@@ -1,4 +1,4 @@
-module github.com/tv2-oss/bifrost-gateway-controller
+module github.com/tv2/bifrost-gateway-controller
 
 go 1.24.0
 
