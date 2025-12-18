@@ -133,7 +133,7 @@ deploy-metallb:
 #################
 .PHONY: deploy-contour
 deploy-contour:
-	helm upgrade -i --repo https://charts.bitnami.com/bitnami contour contour -n projectcontour --version 19.2.0 --create-namespace
+	helm upgrade -i --repo https://projectcontour.github.io/helm-charts/ contour contour -n projectcontour --version 0.2.0 --create-namespace
 
 # To allow contour to provision from gateway resources
 .PHONY: deploy-contour-provisioner
