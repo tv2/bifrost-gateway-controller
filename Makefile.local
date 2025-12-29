@@ -84,7 +84,7 @@ cluster-load-controller-image:
 #################
 .PHONY: deploy-etcd
 deploy-etcd:
-	helm upgrade -i --repo https://charts.bitnami.com/bitnami etcd-test-only etcd --version 10.5.1 --set auth.rbac.create=false
+	helm upgrade -i etcd-test-only oci://registry-1.docker.io/bitnamicharts/etcd --version 12.0.18 --set auth.rbac.create=false,image.repository=bitnamilegacy/etcd,image.tag=3.6.4-debian-12-r4,global.security.allowInsecureImages=true
 
 #################
 .PHONY: deploy-coredns
