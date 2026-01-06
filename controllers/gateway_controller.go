@@ -335,7 +335,14 @@ func combineHostnames(gw *gatewayapi.Gateway, rtList []*gatewayapi.HTTPRoute) (u
 	}
 	for hostname := range hostnames {
 		union = append(union, hostname) // Unique hostnames goes in union
-		if !wildcards.Has(hostname) {   // Unique hostnames goes in intersection if not covered by wildcard
+		covered := false
+		for wildcard := range wildcards {
+			if strings.HasSuffix(hostname, "."+wildcard) || hostname == wildcard {
+				covered = true
+				break
+			}
+		}
+		if !covered {
 			isect = append(isect, hostname)
 		}
 	}
