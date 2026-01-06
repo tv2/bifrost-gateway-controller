@@ -2,7 +2,7 @@ layout:
 - go.kubebuilder.io/v4-alpha
 multigroup: true
 projectName: bifrost-gateway-controller
-repo: github.com/tv2-oss/bifrost-gateway-controller
+repo: github.com/tv2/bifrost-gateway-controller
 resources:
 - controller: true
   group: networking.k8s.io
@@ -21,20 +21,20 @@ resources:
     namespaced: true
   group: gateway.tv2.dk
   kind: GatewayClassBlueprint
-  path: github.com/tv2-oss/bifrost-gateway-controller/apis/gateway.tv2.dk/v1alpha1
+  path: github.com/tv2/bifrost-gateway-controller/apis/gateway.tv2.dk/v1alpha1
   version: v1alpha1
 - api:
     crdVersion: v1
     namespaced: true
   group: gateway.tv2.dk
   kind: GatewayClassConfig
-  path: github.com/tv2-oss/bifrost-gateway-controller/apis/gateway.tv2.dk/v1alpha1
+  path: github.com/tv2/bifrost-gateway-controller/apis/gateway.tv2.dk/v1alpha1
   version: v1alpha1
 - api:
     crdVersion: v1
     namespaced: true
   group: gateway.tv2.dk
   kind: GatewayConfig
-  path: github.com/tv2-oss/bifrost-gateway-controller/apis/gateway.tv2.dk/v1alpha1
+  path: github.com/tv2/bifrost-gateway-controller/apis/gateway.tv2.dk/v1alpha1
   version: v1alpha1
 version: "3"
