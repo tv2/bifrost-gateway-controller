@@ -1,6 +1,6 @@
 # bifrost-gateway-controller-helm
 
-![Version: 0.2.0](https://img.shields.io/badge/Version-0.2.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 0.0.24](https://img.shields.io/badge/AppVersion-0.0.24-informational?style=flat-square)
+![Version: 0.3.0](https://img.shields.io/badge/Version-0.3.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 0.0.24](https://img.shields.io/badge/AppVersion-0.0.24-informational?style=flat-square)
 
 Gateway API driven management of network infrastructure across Kubernetes and cloud infrastructure
 
@@ -13,7 +13,7 @@ Gateway API driven management of network infrastructure across Kubernetes and cl
 | controller.image.name | string | `"bifrost-gateway-controller"` |  |
 | controller.image.pullPolicy | string | `"IfNotPresent"` |  |
 | controller.image.pullSecrets | list | `[]` | Image pull secrets. |
-| controller.image.repository | string | `"ghcr.io/tv2-oss"` |  |
+| controller.image.repository | string | `"ghcr.io/tv2"` |  |
 | controller.image.tag | string | `""` | Image tag. Defaults to `.Chart.appVersion` |
 | controller.livenessProbe.httpGet.path | string | `"/healthz"` |  |
 | controller.livenessProbe.httpGet.port | int | `8081` |  |

@@ -55,6 +55,6 @@ if [ -z "$SCOPE" ] || [ "$SCOPE" == "bifrost" ]; then
     echo ""
     echo "-------------------------------------------------------------------"
     read -p "Press enter to deploy bifrost-gateway-controller"
-	helm repo add tv2-oss https://tv2-oss.github.io/bifrost-gateway-controller 2>/dev/null
-	helm upgrade -i bifrost-gateway-controller tv2-oss/bifrost-gateway-controller --version 0.1.4 --values charts/bifrost-gateway-controller/ci/gatewayclassblueprint-crossplane-aws-alb-values.yaml -n bifrost-gateway-controller-system 2>/dev/null
+	helm repo add tv2 https://tv2.github.io/bifrost-gateway-controller 2>/dev/null
+	helm upgrade -i bifrost-gateway-controller tv2/bifrost-gateway-controller --version 0.1.4 --values charts/bifrost-gateway-controller/ci/gatewayclassblueprint-crossplane-aws-alb-values.yaml -n bifrost-gateway-controller-system 2>/dev/null
 fi

@@ -48,8 +48,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayapi "sigs.k8s.io/gateway-api/apis/v1"
 
-	gwcapi "github.com/tv2-oss/bifrost-gateway-controller/apis/gateway.tv2.dk/v1alpha1"
-	selfapi "github.com/tv2-oss/bifrost-gateway-controller/pkg/api"
+	gwcapi "github.com/tv2/bifrost-gateway-controller/apis/gateway.tv2.dk/v1alpha1"
+	selfapi "github.com/tv2/bifrost-gateway-controller/pkg/api"
 )
 
 var (

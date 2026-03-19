@@ -37,5 +37,5 @@ import (
 )
 
 const (
-	SelfControllerName gatewayapi.GatewayController = "github.com/tv2-oss/bifrost-gateway-controller"
+	SelfControllerName gatewayapi.GatewayController = "github.com/tv2/bifrost-gateway-controller"
 )

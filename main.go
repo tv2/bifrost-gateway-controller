@@ -50,8 +50,8 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	gateway "sigs.k8s.io/gateway-api/apis/v1"
 
-	gatewaytv2dkv1a1 "github.com/tv2-oss/bifrost-gateway-controller/apis/gateway.tv2.dk/v1alpha1"
-	"github.com/tv2-oss/bifrost-gateway-controller/controllers"
+	gatewaytv2dkv1a1 "github.com/tv2/bifrost-gateway-controller/apis/gateway.tv2.dk/v1alpha1"
+	"github.com/tv2/bifrost-gateway-controller/controllers"
 	//+kubebuilder:scaffold:imports
 )
 

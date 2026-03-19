@@ -13,7 +13,7 @@ patchesStrategicMerge:
         spec:
           containers:
             - name: manager
-              image: "ghcr.io/tv2-oss/bifrost-gateway-controller:latest"
+              image: "ghcr.io/tv2/bifrost-gateway-controller:latest"
               imagePullPolicy: "Never"
   - |-
     apiVersion: rbac.authorization.k8s.io/v1
