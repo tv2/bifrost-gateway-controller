@@ -1,3 +1,4 @@
+version: 2
 env:
   - REPOSITORY_OWNER={{ if index .Env "GITHUB_REPOSITORY_OWNER" }}{{ tolower .Env.GITHUB_REPOSITORY_OWNER }}{{ else }}local{{ end }}
 
