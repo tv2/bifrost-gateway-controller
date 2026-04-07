@@ -14,15 +14,15 @@ jobs:
 
       - uses: jetify-com/devbox-install-action@22b0f5500b14df4ea357ce673fbd4ced940ed6a1 # tag=v0.13.0
 
+      - name: Setup E2E KIND cluster
+        run: |
+          devbox run -- make setup-e2e-test-cluster wait-ready-external-dns-test
+
       - name: Build controller and container
         env:
           KO_DOCKER_REPO: kind.local
         run: |
           devbox run -- make build container
-
-      - name: Setup E2E KIND cluster
-        run: |
-          devbox run -- make setup-e2e-test-cluster wait-ready-external-dns-test
 
       - name: Deploy controller to cluster
         run: |
