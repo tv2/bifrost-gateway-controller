@@ -58,11 +58,11 @@ deploy-gateway-api:
 .PHONY: create-cluster
 create-cluster:
 	cat test-data/kind-config.yaml_tpl | k8s_ver=1.32.0 envsubst > test-data/kind-config.yaml
-	kind create cluster --name kind-gwc-dev-cluster --config test-data/kind-config.yaml
+	kind create cluster --name $(KIND_CLUSTER_NAME) --config test-data/kind-config.yaml
 
 .PHONY: delete-cluster
 delete-cluster:
-	kind delete cluster --name kind-gwc-dev-cluster
+	kind delete cluster --name $(KIND_CLUSTER_NAME)
 
 #################
 ISTIO_VERSION ?= 1.24.2
@@ -75,11 +75,6 @@ deploy-istio:
 .PHONY: undeploy-istio
 undeploy-istio:
 	helm uninstall -n istio-system istiod
-
-#################
-.PHONY: cluster-load-controller-image
-cluster-load-controller-image:
-	kind load docker-image ghcr.io/tv2/bifrost-gateway-controller:latest --name kind-gwc-dev-cluster
 
 #################
 .PHONY: deploy-etcd
@@ -275,9 +270,7 @@ setup-getting-started-cluster:
 .PHONY: setup-getting-started-controller
 setup-getting-started-controller:
 	# Using 'Deploy from Local-build and YAML Artifacts' method
-	make build
-	make docker-build
-	make cluster-load-controller-image
+	KO_DOCKER_REPO=kind.local make build container
 	make deploy
 
 GATEWAY_CLASS_NAME ?= contour-istio-cert

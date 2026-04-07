@@ -15,8 +15,10 @@ jobs:
       - uses: jetify-com/devbox-install-action@22b0f5500b14df4ea357ce673fbd4ced940ed6a1 # tag=v0.13.0
 
       - name: Build controller and container
+        env:
+          KO_DOCKER_REPO: kind.local
         run: |
-          devbox run -- make build docker-build
+          devbox run -- make build container
 
       - name: Setup E2E KIND cluster
         run: |
@@ -24,7 +26,7 @@ jobs:
 
       - name: Deploy controller to cluster
         run: |
-          devbox run -- make install cluster-load-controller-image deploy
+          devbox run -- make install deploy
           # Wait for controller to be ready - this allows for short and concise test timeouts
           until kubectl -n bifrost-gateway-controller-system wait pods -lcontrol-plane=controller-manager --for condition=Ready --timeout=120s   ; do echo "."; sleep 1; done
 
