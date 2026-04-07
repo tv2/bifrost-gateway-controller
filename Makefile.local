@@ -271,7 +271,7 @@ setup-getting-started-cluster:
 setup-getting-started-controller:
 	# Using 'Deploy from Local-build and YAML Artifacts' method
 	KO_DOCKER_REPO=kind.local make build container
-	make deploy
+	IMG=kind.local/bifrost-gateway-controller:latest make deploy
 
 GATEWAY_CLASS_NAME ?= contour-istio-cert
 DOMAIN ?= foo.example.com

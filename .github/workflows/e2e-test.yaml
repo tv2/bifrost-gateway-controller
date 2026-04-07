@@ -25,6 +25,8 @@ jobs:
           devbox run -- make build container
 
       - name: Deploy controller to cluster
+        env:
+          IMG: kind.local/bifrost-gateway-controller:latest
         run: |
           devbox run -- make install deploy
           # Wait for controller to be ready - this allows for short and concise test timeouts
