@@ -784,7 +784,7 @@ spec:
       - args:
         - --leader-elect
         command:
-        - /bifrost-gateway-controller
+        - /ko-app/bifrost-gateway-controller
         image: ghcr.io/tv2/bifrost-gateway-controller:latest
         livenessProbe:
           httpGet:
