@@ -60,7 +60,7 @@ jobs:
           KO_DOCKER_REPO: ghcr.io/${{ github.repository }}
           PLATFORMS: linux/amd64,linux/arm64
         run: |
-          IMAGE=$(devbox run -- make container)
+          IMAGE=$(devbox run -- make container | tail -1)
           echo "image=$IMAGE" >> $GITHUB_OUTPUT
 
     outputs:
