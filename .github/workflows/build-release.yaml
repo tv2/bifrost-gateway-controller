@@ -59,11 +59,8 @@ jobs:
         env:
           KO_DOCKER_REPO: ghcr.io/${{ github.repository }}
           PLATFORMS: linux/amd64,linux/arm64
-          VERSION: ${{ github.ref_name }}
         run: |
-          IMAGE=$(devbox run -- ko build --base-import-paths --platform=$PLATFORMS \
-            --image-label org.opencontainers.image.source=https://github.com/${{ github.repository }} \
-            --tags latest,sha-$(git describe --tags --always --dirty --abbrev=12) .)
+          IMAGE=$(devbox run -- make container)
           echo "image=$IMAGE" >> $GITHUB_OUTPUT
 
     outputs:
