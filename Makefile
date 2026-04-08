@@ -143,7 +143,7 @@ manifest-build:
 
 .PHONY: container
 container: ## Build container image with ko.
-	ko build --base-import-paths -t latest -t "sha-$(VERSION)" --platform=$(PLATFORMS) \
+	@ko build --base-import-paths -t latest -t "sha-$(VERSION)" --platform=$(PLATFORMS) \
 		--image-label org.opencontainers.image.source=https://github.com/tv2/bifrost-gateway-controller .
 
 ##@ Deployment
