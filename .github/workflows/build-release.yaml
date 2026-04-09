@@ -92,6 +92,8 @@ jobs:
   verify:
     needs: [ release, sign ]
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
 
     steps:
     - uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159 # tag=v3.9.2
