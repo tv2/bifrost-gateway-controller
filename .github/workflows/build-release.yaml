@@ -93,9 +93,16 @@ jobs:
     needs: [ release, sign ]
     runs-on: ubuntu-latest
     permissions:
-      id-token: write
+      packages: read
 
     steps:
+    - name: Log in to the Container registry
+      uses: docker/login-action@v4
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
     - uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159 # tag=v3.9.2
 
     - name: Verify signature
