@@ -176,76 +176,101 @@ func lookupValues(ctx context.Context, r ControllerClient, gatewayClassName stri
 		return nil, err
 	}
 
-	// Select policies that target GatewayClass, parent resource or namespace of parent resource
-	// Note, policies are kept ordered!
+	// Select policies that target GatewayClass, parent resource or namespace of parent resource.
+	// Policies are kept ordered by hierarchy level (least specific first). Within each level,
+	// policies are sorted by creation timestamp then alphabetically per GEP-713 conflict resolution.
+	// See https://gateway-api.sigs.k8s.io/geps/gep-713/#established-and-challenger-policy-specs
 	var gwccFiltered []*gwcapi.GatewayClassConfig
 	var gwcFiltered []*gwcapi.GatewayConfig
 
-	// Global GatewayClassConfig first
+	// Helpers to sort a sub-group by creation timestamp (oldest first), then alphabetically
+	// by {namespace}/{name} for stable conflict resolution per GEP-713
+	sortGwcc := func(s []*gwcapi.GatewayClassConfig) {
+		sort.SliceStable(s, func(i, j int) bool {
+			ti, tj := s[i].CreationTimestamp.Time, s[j].CreationTimestamp.Time
+			if !ti.Equal(tj) {
+				return ti.Before(tj)
+			}
+			return fmt.Sprintf("%s/%s", s[i].Namespace, s[i].Name) <
+				fmt.Sprintf("%s/%s", s[j].Namespace, s[j].Name)
+		})
+	}
+	sortGwc := func(s []*gwcapi.GatewayConfig) {
+		sort.SliceStable(s, func(i, j int) bool {
+			ti, tj := s[i].CreationTimestamp.Time, s[j].CreationTimestamp.Time
+			if !ti.Equal(tj) {
+				return ti.Before(tj)
+			}
+			return fmt.Sprintf("%s/%s", s[i].Namespace, s[i].Name) <
+				fmt.Sprintf("%s/%s", s[j].Namespace, s[j].Name)
+		})
+	}
+
+	// Global GatewayClassConfig first (least specific)
+	var gwccGlobalGroup []*gwcapi.GatewayClassConfig
 	for idx := range gwccGlobal.Items {
 		gwcc := &gwccGlobal.Items[idx]
 		if gwcc.Spec.TargetRef.Kind == "GatewayClass" &&
 			gwcc.Spec.TargetRef.Group == gatewayapi.GroupName &&
 			string(gwcc.Spec.TargetRef.Name) == gatewayClassName {
-			gwccFiltered = append(gwccFiltered, gwcc) // gwcc targets GatewayClass
+			gwccGlobalGroup = append(gwccGlobalGroup, gwcc)
 		}
 	}
+	sortGwcc(gwccGlobalGroup)
+	gwccFiltered = append(gwccFiltered, gwccGlobalGroup...)
+
 	// Namespace GatewayClassConfig targeting namespace second
+	var gwccNsGroup []*gwcapi.GatewayClassConfig
 	for idx := range gwccLocal.Items {
 		gwcc := &gwccLocal.Items[idx]
 		if gwcc.Spec.TargetRef.Kind == "Namespace" &&
 			gwcc.Spec.TargetRef.Group == "" &&
 			string(gwcc.Spec.TargetRef.Name) == gwNamespace {
-			gwccFiltered = append(gwccFiltered, gwcc) // gwcc targets namespace
+			gwccNsGroup = append(gwccNsGroup, gwcc)
 		}
 	}
-	// Namespace GatewayClassConfig targeting GatewayClass third
+	sortGwcc(gwccNsGroup)
+	gwccFiltered = append(gwccFiltered, gwccNsGroup...)
+
+	// Namespace GatewayClassConfig targeting GatewayClass third (most specific)
+	var gwccLocalGwcGroup []*gwcapi.GatewayClassConfig
 	for idx := range gwccLocal.Items {
 		gwcc := &gwccLocal.Items[idx]
 		if gwcc.Spec.TargetRef.Kind == "GatewayClass" &&
 			gwcc.Spec.TargetRef.Group == gatewayapi.GroupName &&
 			string(gwcc.Spec.TargetRef.Name) == gatewayClassName {
-			gwccFiltered = append(gwccFiltered, gwcc) // gwcc targets GatewayClass
+			gwccLocalGwcGroup = append(gwccLocalGwcGroup, gwcc)
 		}
 	}
-	// Namespace GatewayConfig first
+	sortGwcc(gwccLocalGwcGroup)
+	gwccFiltered = append(gwccFiltered, gwccLocalGwcGroup...)
+
+	// Namespace GatewayConfig targeting namespace first (less specific)
+	var gwcNsGroup []*gwcapi.GatewayConfig
 	for idx := range gwcLocal.Items {
 		gwc := &gwcLocal.Items[idx]
 		if gwc.Spec.TargetRef.Kind == "Namespace" &&
 			gwc.Spec.TargetRef.Group == "" &&
 			string(gwc.Spec.TargetRef.Name) == gwNamespace {
-			gwcFiltered = append(gwcFiltered, gwc) // gwcc targets namespace of Gateway
+			gwcNsGroup = append(gwcNsGroup, gwc)
 		}
 	}
-	// Parent resource GatewayConfig second
+	sortGwc(gwcNsGroup)
+	gwcFiltered = append(gwcFiltered, gwcNsGroup...)
+
+	// Parent resource GatewayConfig second (most specific)
+	var gwcGwGroup []*gwcapi.GatewayConfig
 	for idx := range gwcLocal.Items {
 		gwc := &gwcLocal.Items[idx]
 		if gwc.Spec.TargetRef.Kind == "Gateway" &&
 			gwc.Spec.TargetRef.Group == gatewayapi.GroupName &&
 			(gwc.Spec.TargetRef.Namespace == nil || string(*gwc.Spec.TargetRef.Namespace) == gwNamespace) &&
 			string(gwc.Spec.TargetRef.Name) == gwName {
-			gwcFiltered = append(gwcFiltered, gwc) // gwcc targets Gateway
+			gwcGwGroup = append(gwcGwGroup, gwc)
 		}
 	}
-
-	// Sort policies by creation timestamp (oldest first), then alphabetically
-	// by {namespace}/{name} for stable conflict resolution per GEP-713
-	sort.SliceStable(gwccFiltered, func(i, j int) bool {
-		ti, tj := gwccFiltered[i].CreationTimestamp.Time, gwccFiltered[j].CreationTimestamp.Time
-		if !ti.Equal(tj) {
-			return ti.Before(tj)
-		}
-		return fmt.Sprintf("%s/%s", gwccFiltered[i].Namespace, gwccFiltered[i].Name) <
-			fmt.Sprintf("%s/%s", gwccFiltered[j].Namespace, gwccFiltered[j].Name)
-	})
-	sort.SliceStable(gwcFiltered, func(i, j int) bool {
-		ti, tj := gwcFiltered[i].CreationTimestamp.Time, gwcFiltered[j].CreationTimestamp.Time
-		if !ti.Equal(tj) {
-			return ti.Before(tj)
-		}
-		return fmt.Sprintf("%s/%s", gwcFiltered[i].Namespace, gwcFiltered[i].Name) <
-			fmt.Sprintf("%s/%s", gwcFiltered[j].Namespace, gwcFiltered[j].Name)
-	})
+	sortGwc(gwcGwGroup)
+	gwcFiltered = append(gwcFiltered, gwcGwGroup...)
 
 	// Process defaults
 
