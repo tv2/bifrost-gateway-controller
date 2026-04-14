@@ -35,6 +35,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -130,7 +131,7 @@ func merge(a, b any) any {
 //
 // See also doc/extended-configuration-w-policy-attachments.md
 //
-// FIXME: Fully implement conflict resolution: https://gateway-api.sigs.k8s.io/references/policy-attachment/#conflict-resolution
+// Conflict resolution follows GEP-713: https://gateway-api.sigs.k8s.io/geps/gep-713/#established-and-challenger-policy-specs
 //
 //nolint:gocyclo // This function have a repeating character and this not as complex as the number of ifs may indicate
 func lookupValues(ctx context.Context, r ControllerClient, gatewayClassName string, gwcb *gwcapi.GatewayClassBlueprint,
@@ -226,6 +227,25 @@ func lookupValues(ctx context.Context, r ControllerClient, gatewayClassName stri
 			gwcFiltered = append(gwcFiltered, gwc) // gwcc targets Gateway
 		}
 	}
+
+	// Sort policies by creation timestamp (oldest first), then alphabetically
+	// by {namespace}/{name} for stable conflict resolution per GEP-713
+	sort.SliceStable(gwccFiltered, func(i, j int) bool {
+		ti, tj := gwccFiltered[i].CreationTimestamp.Time, gwccFiltered[j].CreationTimestamp.Time
+		if !ti.Equal(tj) {
+			return ti.Before(tj)
+		}
+		return fmt.Sprintf("%s/%s", gwccFiltered[i].Namespace, gwccFiltered[i].Name) <
+			fmt.Sprintf("%s/%s", gwccFiltered[j].Namespace, gwccFiltered[j].Name)
+	})
+	sort.SliceStable(gwcFiltered, func(i, j int) bool {
+		ti, tj := gwcFiltered[i].CreationTimestamp.Time, gwcFiltered[j].CreationTimestamp.Time
+		if !ti.Equal(tj) {
+			return ti.Before(tj)
+		}
+		return fmt.Sprintf("%s/%s", gwcFiltered[i].Namespace, gwcFiltered[i].Name) <
+			fmt.Sprintf("%s/%s", gwcFiltered[j].Namespace, gwcFiltered[j].Name)
+	})
 
 	// Process defaults
 
