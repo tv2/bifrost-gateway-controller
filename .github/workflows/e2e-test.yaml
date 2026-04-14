@@ -13,6 +13,8 @@ jobs:
           fetch-depth: 0
 
       - uses: jetify-com/devbox-install-action@22b0f5500b14df4ea357ce673fbd4ced940ed6a1 # tag=v0.13.0
+        with:
+          enable-cache: true
 
       - name: Setup E2E KIND cluster
         run: |

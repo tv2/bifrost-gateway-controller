@@ -15,11 +15,11 @@
     "kubernetes-controller-tools@0.16.4",
     "kubernetes-helm@3.16.3",
     "kustomize@5.5.0",
-    "setup-envtest@0.19.0"
+    "setup-envtest@0.19.0",
   ],
   "shell": {
     "init_hook": [
-      "echo 'Welcome to Bifrost gateway-controller dev environment'"
+      "echo 'Welcome to Bifrost gateway-controller dev environment'",
     ],
-  }
+  },
 }
