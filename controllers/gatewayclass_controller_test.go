@@ -120,7 +120,7 @@ spec:
 }
 
 // conditionByType returns the first condition matching the given type, or nil.
-func conditionByType(conditions []metav1.Condition, condType string) *metav1.Condition {
+func conditionByType(conditions []metav1.Condition, condType string) *metav1.Condition { //nolint:unparam // condType is always the same in current tests but kept for reusability
 	for i := range conditions {
 		if conditions[i].Type == condType {
 			return &conditions[i]

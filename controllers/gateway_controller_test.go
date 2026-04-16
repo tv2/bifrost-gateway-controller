@@ -268,7 +268,7 @@ var _ = Describe("combineHostnames", func() {
 	}
 
 	// rtWith is a helper to create an HTTPRoute with the given hostnames
-	rtWith := func(ns string, hostnames ...string) *gatewayapi.HTTPRoute {
+	rtWith := func(ns string, hostnames ...string) *gatewayapi.HTTPRoute { //nolint:unparam // ns is always "default" in tests but kept for clarity
 		rt := &gatewayapi.HTTPRoute{}
 		rt.Namespace = ns
 		for _, h := range hostnames {
@@ -567,7 +567,7 @@ var _ = Describe("Gateway controller", func() {
 			Expect(setGatewayStatus(gwChildNN, &metav1.Condition{
 				Type:   string(gatewayapi.GatewayConditionReady),
 				Status: metav1.ConditionFalse,
-				//nolint:staticcheck
+				//nolint:staticcheck // GatewayReasonReady is deprecated but still used by the upstream API
 				Reason: string(gatewayapi.GatewayReasonReady)}, nil)).Should(Succeed())
 			time.Sleep(5 * time.Second)
 
@@ -598,7 +598,7 @@ var _ = Describe("Gateway controller", func() {
 			Expect(setGatewayStatus(gwChildNN, &metav1.Condition{
 				Type:   string(gatewayapi.GatewayConditionReady),
 				Status: metav1.ConditionTrue,
-				//nolint:staticcheck
+				//nolint:staticcheck // GatewayReasonReady is deprecated but still used by the upstream API
 				Reason: string(gatewayapi.GatewayReasonReady)},
 				&gatewayapi.GatewayStatusAddress{Type: &addrType, Value: "4.5.6.7"})).Should(Succeed())
 

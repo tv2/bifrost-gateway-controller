@@ -75,13 +75,13 @@ func (f *fakeDynControllerClient) DynamicClient() dynamic.Interface { return f.d
 
 // newFakeDynClient creates a new fakeDynControllerClient with the given objects
 // with a reactor that allows ApplyPatchType for unstructured objects.
-func newFakeDynClient(objs ...client.Object) *fakeDynControllerClient {
+func newFakeDynClient(objs ...client.Object) *fakeDynControllerClient { //nolint:unparam // objs is variadic for convenience
 	fc := newFakeClient(objs...)
 	dyn := fakedynamic.NewSimpleDynamicClient(fc.scheme)
 	// The default fake tracker requires objects to exist before Apply;
 	// intercept ApplyPatchType and return the deserialized object directly.
 	dyn.PrependReactor("patch", "*", func(action ktesting.Action) (bool, runtime.Object, error) {
-		pa := action.(ktesting.PatchAction)
+		pa, _ := action.(ktesting.PatchAction)
 		if pa.GetPatchType() != k8stypes.ApplyPatchType {
 			return false, nil, nil
 		}
@@ -254,14 +254,16 @@ var _ = Describe("merge", func() {
 	It("Should overwrite scalar values from 'b' into 'a'", func() {
 		a := map[string]any{"key": "val-a"}
 		b := map[string]any{"key": "val-b"}
-		result := merge(a, b).(map[string]any)
+		result, ok := merge(a, b).(map[string]any)
+		Expect(ok).To(BeTrue())
 		Expect(result["key"]).To(Equal("val-b")) // Expect value from b to overwrite value from a
 	})
 
 	It("Should add new keys from 'b'", func() {
 		a := map[string]any{"key1": "val1"}
 		b := map[string]any{"key2": "val2"}
-		result := merge(a, b).(map[string]any)
+		result, ok := merge(a, b).(map[string]any)
+		Expect(ok).To(BeTrue())
 		Expect(result["key1"]).To(Equal("val1")) // Expect existing key (key1) to remain unchanged
 		Expect(result["key2"]).To(Equal("val2")) // Expect new key (key2) from b to be added
 	})
@@ -269,8 +271,10 @@ var _ = Describe("merge", func() {
 	It("Should merge nested maps", func() {
 		a := map[string]any{"metadata": map[string]any{"onlyInA": "1", "shared": "2"}}
 		b := map[string]any{"metadata": map[string]any{"shared": "3", "onlyInB": "4"}}
-		result := merge(a, b).(map[string]any)
-		metadata := result["metadata"].(map[string]any)
+		result, ok := merge(a, b).(map[string]any)
+		Expect(ok).To(BeTrue())
+		metadata, ok := result["metadata"].(map[string]any)
+		Expect(ok).To(BeTrue())
 		Expect(metadata["onlyInA"]).To(Equal("1")) // Expect existing key to remain unchanged
 		Expect(metadata["shared"]).To(Equal("3"))  // Expect shared key to be overwritten by b
 		Expect(metadata["onlyInB"]).To(Equal("4")) // Expect new key from b to be added
@@ -279,7 +283,8 @@ var _ = Describe("merge", func() {
 	It("Should preserve 'a' on type conflict (map vs scalar)", func() {
 		a := map[string]any{"key": map[string]any{"nested": "value"}}
 		b := map[string]any{"key": "scalar"}
-		result := merge(a, b).(map[string]any)
+		result, ok := merge(a, b).(map[string]any)
+		Expect(ok).To(BeTrue())
 		Expect(result["key"]).To(BeAssignableToTypeOf(map[string]any{})) // Expect 'a' to be preserved as 'b' has a conflicting type
 	})
 })
@@ -505,7 +510,7 @@ var _ = Describe("lookupValues", func() {
 
 	// --- 3. Specificity between levels ---
 
-	It("Should let GatewayConfig default overwrite GatewayClassConfig default for the same key", func() {
+	It("Should let GatewayConfig default overwrite GatewayClassConfig default, and GatewayClassConfig override beat GatewayConfig override", func() {
 		gwcb := &gwcapi.GatewayClassBlueprint{
 			ObjectMeta: metav1.ObjectMeta{Name: "bp"},
 		}
@@ -513,62 +518,33 @@ var _ = Describe("lookupValues", func() {
 			ObjectMeta: metav1.ObjectMeta{Name: "global", Namespace: "controller-system"},
 			Spec: gwcapi.GatewayClassConfigSpec{
 				TemplateValues: gwcapi.TemplateValues{
-					Default: jsonRaw(`{"key": "gwcc-default"}`),
+					Default:  jsonRaw(`{"defaultKey": "gwcc-default"}`),
+					Override: jsonRaw(`{"overrideKey": "gwcc-override"}`),
 				},
 				TargetRef: gatewayv1a2.NamespacedPolicyTargetReference{
 					Group: gatewayapi.GroupName, Kind: "GatewayClass", Name: "test-class",
 				},
 			},
 		}
+		gwc := &gwcapi.GatewayConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "gw-policy", Namespace: "default"},
+			Spec: gwcapi.GatewayConfigSpec{
+				TemplateValues: gwcapi.TemplateValues{
+					Default:  jsonRaw(`{"defaultKey": "gwc-default"}`),
+					Override: jsonRaw(`{"overrideKey": "gwc-override"}`),
+				},
+				TargetRef: gatewayv1a2.NamespacedPolicyTargetReference{
+					Group: gatewayapi.GroupName, Kind: "Gateway", Name: "test-gw", Namespace: nsPtr("default"),
+				},
+			},
+		}
+		r := newFakeClient(gwcc, gwc)
+		values, err := lookupValues(ctx, r, "test-class", gwcb, "default", "test-gw")
+		Expect(err).NotTo(HaveOccurred())
 		// GatewayConfig is more specific, so its default wins
-		gwc := &gwcapi.GatewayConfig{
-			ObjectMeta: metav1.ObjectMeta{Name: "gw-policy", Namespace: "default"},
-			Spec: gwcapi.GatewayConfigSpec{
-				TemplateValues: gwcapi.TemplateValues{
-					Default: jsonRaw(`{"key": "gwc-default"}`),
-				},
-				TargetRef: gatewayv1a2.NamespacedPolicyTargetReference{
-					Group: gatewayapi.GroupName, Kind: "Gateway", Name: "test-gw", Namespace: nsPtr("default"),
-				},
-			},
-		}
-		r := newFakeClient(gwcc, gwc)
-		values, err := lookupValues(ctx, r, "test-class", gwcb, "default", "test-gw")
-		Expect(err).NotTo(HaveOccurred())
-		Expect(values["key"]).To(Equal("gwc-default"))
-	})
-
-	It("Should let GatewayClassConfig override beat GatewayConfig override for the same key", func() {
-		gwcb := &gwcapi.GatewayClassBlueprint{
-			ObjectMeta: metav1.ObjectMeta{Name: "bp"},
-		}
-		// GatewayClassConfig override is less specific, so it should win over GatewayConfig override
-		gwcc := &gwcapi.GatewayClassConfig{
-			ObjectMeta: metav1.ObjectMeta{Name: "global", Namespace: "controller-system"},
-			Spec: gwcapi.GatewayClassConfigSpec{
-				TemplateValues: gwcapi.TemplateValues{
-					Override: jsonRaw(`{"key": "gwcc-override"}`),
-				},
-				TargetRef: gatewayv1a2.NamespacedPolicyTargetReference{
-					Group: gatewayapi.GroupName, Kind: "GatewayClass", Name: "test-class",
-				},
-			},
-		}
-		gwc := &gwcapi.GatewayConfig{
-			ObjectMeta: metav1.ObjectMeta{Name: "gw-policy", Namespace: "default"},
-			Spec: gwcapi.GatewayConfigSpec{
-				TemplateValues: gwcapi.TemplateValues{
-					Override: jsonRaw(`{"key": "gwc-override"}`),
-				},
-				TargetRef: gatewayv1a2.NamespacedPolicyTargetReference{
-					Group: gatewayapi.GroupName, Kind: "Gateway", Name: "test-gw", Namespace: nsPtr("default"),
-				},
-			},
-		}
-		r := newFakeClient(gwcc, gwc)
-		values, err := lookupValues(ctx, r, "test-class", gwcb, "default", "test-gw")
-		Expect(err).NotTo(HaveOccurred())
-		Expect(values["key"]).To(Equal("gwcc-override"))
+		Expect(values["defaultKey"]).To(Equal("gwc-default"))
+		// GatewayClassConfig override is less specific, so it wins over GatewayConfig override
+		Expect(values["overrideKey"]).To(Equal("gwcc-override"))
 	})
 
 	It("Should let local GatewayClassConfig default beat global GatewayClassConfig default", func() {
@@ -671,7 +647,8 @@ var _ = Describe("lookupValues", func() {
 		r := newFakeClient(gwc)
 		values, err := lookupValues(ctx, r, "test-class", gwcb, "default", "test-gw")
 		Expect(err).NotTo(HaveOccurred())
-		nested := values["nested"].(map[string]any)
+		nested, ok := values["nested"].(map[string]any)
+		Expect(ok).To(BeTrue())
 		Expect(nested["bpOverride"]).To(Equal("from-bp")) // Blueprint override wins
 		Expect(nested["bpDefault"]).To(Equal("from-bp"))  // Blueprint default preserved
 		Expect(nested["gwOverride"]).To(Equal("from-gw")) // GatewayConfig override applies
@@ -802,7 +779,8 @@ var _ = Describe("lookupValues", func() {
 
 		// Nested values
 		By("Nested blueprint override wins")
-		nested := values["nested"].(map[string]any)
+		nested, ok := values["nested"].(map[string]any)
+		Expect(ok).To(BeTrue())
 		Expect(nested["someValue1"]).To(Equal("blueprint-nested-override1"))
 
 		By("Nested blueprint default is preserved")

@@ -197,7 +197,7 @@ var _ = Describe("renderTemplates", func() {
 			{TemplateName: "bad", Template: badTmpl, StringTemplate: "val: {{ .Values.missing }}"},
 		}
 		rendered, exists := renderTemplates(ctx, r, newTestParentGateway(), templates, &TemplateValues{}, false)
-		Expect(rendered).To(Equal(1)) // TODO: seems wierd that rendered and exists always equal the same.
+		Expect(rendered).To(Equal(1)) // TODO: seems weird that rendered and exists always equal the same.
 		Expect(exists).To(Equal(1))
 	})
 })
@@ -220,8 +220,11 @@ var _ = Describe("buildResourceValues", func() {
 		}
 		vals := buildResourceValues(templates)
 		Expect(vals).To(HaveKey("myResource"))
-		resources := vals["myResource"].([]map[string]any)
-		Expect(resources[0]["data"].(map[string]any)["key"]).To(Equal("val"))
+		resources, ok := vals["myResource"].([]map[string]any)
+		Expect(ok).To(BeTrue())
+		data, ok := resources[0]["data"].(map[string]any)
+		Expect(ok).To(BeTrue())
+		Expect(data["key"]).To(Equal("val"))
 	})
 
 	It("Should return empty map entries for resources without Current", func() {
@@ -230,7 +233,8 @@ var _ = Describe("buildResourceValues", func() {
 		}
 		vals := buildResourceValues(templates)
 		Expect(vals).To(HaveKey("pending"))
-		resources := vals["pending"].([]map[string]any)
+		resources, ok := vals["pending"].([]map[string]any)
+		Expect(ok).To(BeTrue())
 		Expect(resources).To(HaveLen(0))
 	})
 
@@ -472,10 +476,12 @@ var _ = Describe("objectToMap", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(m).To(HaveKey("metadata"))
 		Expect(m).To(HaveKey("spec"))
-		metadata := m["metadata"].(map[string]any)
+		metadata, ok := m["metadata"].(map[string]any)
+		Expect(ok).To(BeTrue())
 		Expect(metadata["name"]).To(Equal("test-gw"))
 		Expect(metadata["namespace"]).To(Equal("default"))
-		spec := m["spec"].(map[string]any)
+		spec, ok := m["spec"].(map[string]any)
+		Expect(ok).To(BeTrue())
 		Expect(spec["gatewayClassName"]).To(Equal("my-class"))
 	})
 
