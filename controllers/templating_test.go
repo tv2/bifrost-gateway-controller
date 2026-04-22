@@ -380,12 +380,13 @@ var _ = Describe("helperToYaml", func() {
 // ------------------------------------
 
 var _ = Describe("template2maps", func() {
+	ctx := context.Background()
 
 	It("Should render a single document", func() {
 		tmpl, err := parseSingleTemplate("test", "key1: val1\nkey2: val2")
 		Expect(err).NotTo(HaveOccurred())
 		values := &TemplateValues{}
-		maps, err := template2maps(tmpl, values)
+		maps, err := template2maps(ctx, tmpl, values)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(maps[0]["key1"]).To(Equal("val1"))
 		Expect(maps[0]["key2"]).To(Equal("val2"))
@@ -395,7 +396,7 @@ var _ = Describe("template2maps", func() {
 		tmpl, err := parseSingleTemplate("test", "name: doc1\n---\nname: doc2\n---\nname: doc3")
 		Expect(err).NotTo(HaveOccurred())
 		values := &TemplateValues{}
-		maps, err := template2maps(tmpl, values)
+		maps, err := template2maps(ctx, tmpl, values)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(maps[0]["name"]).To(Equal("doc1"))
 		Expect(maps[1]["name"]).To(Equal("doc2"))
@@ -406,7 +407,7 @@ var _ = Describe("template2maps", func() {
 		tmpl, err := parseSingleTemplate("test", "val: {{ .Values.myKey }}")
 		Expect(err).NotTo(HaveOccurred())
 		values := &TemplateValues{Values: map[string]any{"myKey": "hello"}}
-		maps, err := template2maps(tmpl, values)
+		maps, err := template2maps(ctx, tmpl, values)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(maps[0]["val"]).To(Equal("hello"))
 	})
@@ -417,12 +418,13 @@ var _ = Describe("template2maps", func() {
 // ------------------------------------
 
 var _ = Describe("template2Composite", func() {
+	ctx := context.Background()
 
 	It("Should convert a single-document template into a ResourceComposite", func() {
 		r := newFakeClientWithMapper()
 		tmpl, err := parseSingleTemplate("test", "apiVersion: gateway.networking.k8s.io/v1\nkind: Gateway\nmetadata:\n  name: my-gw")
 		Expect(err).NotTo(HaveOccurred())
-		composites, err := template2Composite(r, tmpl, &TemplateValues{})
+		composites, err := template2Composite(ctx, r, tmpl, &TemplateValues{})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(composites[0].Rendered.GetName()).To(Equal("my-gw"))
 		Expect(composites[0].Rendered.GetKind()).To(Equal("Gateway"))
@@ -436,7 +438,7 @@ var _ = Describe("template2Composite", func() {
 		tmpl, err := parseSingleTemplate("test",
 			"apiVersion: gateway.networking.k8s.io/v1\nkind: Gateway\nmetadata:\n  name: gw1\n---\napiVersion: gateway.networking.k8s.io/v1\nkind: Gateway\nmetadata:\n  name: gw2")
 		Expect(err).NotTo(HaveOccurred())
-		composites, err := template2Composite(r, tmpl, &TemplateValues{})
+		composites, err := template2Composite(ctx, r, tmpl, &TemplateValues{})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(composites[0].Rendered.GetName()).To(Equal("gw1"))
 		Expect(composites[1].Rendered.GetName()).To(Equal("gw2"))
@@ -446,7 +448,7 @@ var _ = Describe("template2Composite", func() {
 		r := newFakeClientWithMapper()
 		tmpl, err := parseSingleTemplate("test", "val: {{ .Values.missing }}")
 		Expect(err).NotTo(HaveOccurred())
-		_, err = template2Composite(r, tmpl, &TemplateValues{})
+		_, err = template2Composite(ctx, r, tmpl, &TemplateValues{})
 		Expect(err).To(HaveOccurred())
 	})
 
@@ -454,7 +456,7 @@ var _ = Describe("template2Composite", func() {
 		r := newFakeClientWithMapper()
 		tmpl, err := parseSingleTemplate("test", "apiVersion: unknown.io/v1\nkind: NoSuchKind\nmetadata:\n  name: x")
 		Expect(err).NotTo(HaveOccurred())
-		_, err = template2Composite(r, tmpl, &TemplateValues{})
+		_, err = template2Composite(ctx, r, tmpl, &TemplateValues{})
 		Expect(err).To(HaveOccurred())
 	})
 })

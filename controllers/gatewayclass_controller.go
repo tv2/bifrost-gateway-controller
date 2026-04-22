@@ -90,34 +90,39 @@ func (r *GatewayClassReconciler) SetupWithManager(mgr ctrl.Manager) error {
 }
 
 func (r *GatewayClassReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	log := logger.FromContext(ctx)
+	logger := logger.FromContext(ctx)
+	logger.Info("reconcile started", "gatewayClass", req.Name)
 
 	var valid = true
 	var errWhyInvalid error
 
 	gwc, err := lookupGatewayClass(ctx, r, gatewayapi.ObjectName(req.Name))
 	if err != nil {
-		return ctrl.Result{}, err
+		logger.Info("GatewayClass not found", "gatewayClass", req.Name)
+		return ctrl.Result{}, nil
 	}
 
 	if !isOurGatewayClass(gwc) {
+		logger.Info("skipping GatewayClass not managed by us", "gatewayClass", req.Name, "controllerName", gwc.Spec.ControllerName)
 		return ctrl.Result{}, nil
 	}
 
 	_, err = lookupGatewayClassBlueprint(ctx, r, gwc)
 	if err != nil {
 		valid = false
-		errWhyInvalid = fmt.Errorf("blueprint for GatewayClass %q not found", gwc.ObjectMeta.Name)
+		errWhyInvalid = fmt.Errorf("blueprint for GatewayClass '%s' not found", gwc.ObjectMeta.Name)
+		logger.Info("blueprint not found for GatewayClass", "gatewayClass", gwc.Name, "parametersRef", gwc.Spec.ParametersRef)
 	}
 
 	if valid {
-		log.Info("Accepted", "GatewayClass", req.Name)
+		logger.V(1).Info("Accepted", "gatewayClass", req.Name)
 		meta.SetStatusCondition(&gwc.Status.Conditions, metav1.Condition{
 			Type:               string(gatewayapi.GatewayClassConditionStatusAccepted),
 			Status:             "True",
 			Reason:             string(gatewayapi.GatewayClassReasonAccepted),
 			ObservedGeneration: gwc.ObjectMeta.Generation})
 	} else {
+		logger.V(1).Info("InvalidParameters", "gatewayClass", req.Name, "reason", errWhyInvalid)
 		meta.SetStatusCondition(&gwc.Status.Conditions, metav1.Condition{
 			Type:               string(gatewayapi.GatewayClassConditionStatusAccepted),
 			Status:             "False",
@@ -127,11 +132,14 @@ func (r *GatewayClassReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	err = r.Client().Status().Update(ctx, gwc)
 	if err != nil {
+		logger.Error(err, "failed to update GatewayClass status", "gatewayClass", req.Name, "valid", valid)
 		return ctrl.Result{}, fmt.Errorf("failed to update GatewayClass status condition: %w", err)
 	}
+	logger.V(1).Info("status updated", "gatewayClass", req.Name, "accepted", valid)
 
 	if !valid {
 		return ctrl.Result{RequeueAfter: dependencyMissingRequeuePeriod}, errWhyInvalid
 	}
+	logger.Info("reconcile completed successfully", "gatewayClass", req.Name)
 	return ctrl.Result{}, nil
 }
