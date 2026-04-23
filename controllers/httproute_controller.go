@@ -153,14 +153,16 @@ func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	var requeue = false
 	var rt gatewayapi.HTTPRoute
 	if err := r.Client().Get(ctx, req.NamespacedName, &rt); err != nil {
+		logger.Info("HTTPRoute not found", "httproute", req.NamespacedName)
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	logger.Info("HTTPRoute")
+	logger.Info("reconcile started", "httproute", req.NamespacedName, "parentRefs", len(rt.Spec.ParentRefs))
 
 	// Prepare HTTPRoute resource for use in templates by converting to map[string]any
 	rtMap, err := objectToMap(&rt)
 	if err != nil {
+		logger.Error(err, "cannot convert httproute to map", "httproute", req.NamespacedName)
 		return ctrl.Result{}, fmt.Errorf("cannot convert httproute to map: %w", err)
 	}
 
@@ -176,12 +178,17 @@ func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// Loop through Gateway parents, render HTTPRoute using templates defined by associated GatewayClassBlueprint
 	for _, parent := range rt.Spec.ParentRefs {
 		if *parent.Kind != gatewayapi.Kind("Gateway") {
+			logger.V(1).Info("skipping non-Gateway parentRef", "kind", *parent.Kind, "name", parent.Name)
 			continue
 		}
 
+		// Collect debug context for this parent iteration
+		var parentDebugCtx []any
+		parentDebugCtx = append(parentDebugCtx, "parentGateway", parent.Name)
+
 		gw, err := lookupParent(ctx, r, &rt, parent)
 		if err != nil {
-			logger.Info("gateway for httproute not found", "httproute", rt.Name, "parent", parent)
+			logger.Info("gateway for HTTPRoute not found, requeuing", "httproute", rt.Name, "parentGateway", parent.Name)
 			requeue = true
 			continue
 		}
@@ -193,23 +200,29 @@ func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 		gwc, err := lookupGatewayClass(ctx, r, gw.Spec.GatewayClassName)
 		if err != nil {
-			logger.Info("gatewayClass not found", "gatewayclassname", gw.Spec.GatewayClassName)
+			logger.Info("GatewayClass not found, requeuing", "gatewayClassName", gw.Spec.GatewayClassName, "parentGateway", parent.Name)
 			requeue = true
 			continue
 		}
 		if !isOurGatewayClass(gwc) {
+			logger.Info("skipping parentRef with non-owned GatewayClass", "gatewayClassName", gwc.Name, "controllerName", gwc.Spec.ControllerName)
 			continue
 		}
 
+		parentDebugCtx = append(parentDebugCtx, "gatewayClass", gwc.Name)
+
 		gwcb, err := lookupGatewayClassBlueprint(ctx, r, gwc)
 		if err != nil {
-			logger.Info("parameters for GatewayClass not found", "gatewayclassparameters", gwc.Name)
+			logger.Info("blueprint not found for GatewayClass, requeuing", "gatewayClass", gwc.Name, "parametersRef", gwc.Spec.ParametersRef)
 			requeue = true
 			continue
 		}
 
+		parentDebugCtx = append(parentDebugCtx, "blueprint", gwcb.Name)
+
 		values, err := lookupValues(ctx, r, gwc.Name, gwcb, gw.Namespace, gw.Name)
 		if err != nil {
+			logger.Error(err, "cannot lookup values", parentDebugCtx...)
 			return ctrl.Result{}, fmt.Errorf("cannot lookup values: %w", err)
 		}
 		templateValues.Values = values
@@ -217,14 +230,19 @@ func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		// Prepare Gateway resource for use in templates by converting to map[string]any
 		gatewayMap, err := objectToMap(gw)
 		if err != nil {
+			logger.Error(err, "cannot convert gateway to map", "parentGateway", parent.Name)
 			return ctrl.Result{}, fmt.Errorf("cannot convert gateway to map: %w", err)
 		}
 		templateValues.Gateway = &gatewayMap
 
 		templates, err := parseTemplates(gwcb.Spec.HTTPRouteTemplate.ResourceTemplates)
 		if err != nil {
+			logger.Error(err, "cannot parse templates", parentDebugCtx...)
 			return ctrl.Result{}, err
 		}
+
+		parentDebugCtx = append(parentDebugCtx, "templateCount", len(templates))
+		logger.V(1).Info("processing parent", parentDebugCtx...)
 
 		// Resource templates may reference each other, with
 		// the worst-case being a strictly linear DAG. This
@@ -232,21 +250,22 @@ func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		// being the number of resources.
 		var renderedNum, existsNum int
 		for attempt := 0; attempt < len(templates); attempt++ {
-			logger.Info("start reconcile loop", "attempt", attempt)
+			logger.V(1).Info("reconcile loop", "attempt", attempt, "totalTemplates", len(templates), "parentGateway", parent.Name)
 			isFinalAttempt := attempt == len(templates)-1
 
 			templateValues.Resources = buildResourceValues(templates)
 
 			renderedNum, existsNum = renderTemplates(ctx, r, &rt, templates, &templateValues, isFinalAttempt)
-			logger.Info("Rendered", "rendered", renderedNum, "exists", existsNum)
+			logger.V(1).Info("rendered templates", "rendered", renderedNum, "exists", existsNum, "attempt", attempt)
 
 			if err := applyTemplates(ctx, r, &rt, templates); err != nil {
+				logger.Error(err, "unable to apply templates", parentDebugCtx...)
 				return ctrl.Result{}, fmt.Errorf("unable to apply templates: %w", err)
 			}
 		}
 		// If we haven't already decided to requeue, then requeue if not all templates could render (possibly a missing dependency)
 		requeue = requeue || (renderedNum != len(templates))
-		logger.Info("ending reconcile loop", "renderedNum", renderedNum, "totalNum", len(templates), "requeue", requeue)
+		logger.V(1).Info("template loop completed", "parentGateway", parent.Name, "renderedNum", renderedNum, "totalNum", len(templates), "requeue", requeue)
 
 		// FIXME errors in templating and status of sub-resources in general should set status conditions
 
@@ -262,14 +281,15 @@ func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	if doStatusUpdate {
 		if err := r.Client().Status().Update(ctx, &rt); err != nil {
-			logger.Error(err, "unable to update HTTPRoute status")
+			logger.Error(err, "unable to update HTTPRoute status", "httproute", req.NamespacedName)
 			return ctrl.Result{}, err
 		}
 	}
 
 	if requeue {
-		logger.Info("requeue - not all resources updated")
+		logger.Info("requeuing, dependencies not yet available", "httproute", req.NamespacedName)
 		return ctrl.Result{RequeueAfter: dependencyMissingRequeuePeriod}, nil
 	}
+	logger.Info("reconcile completed successfully", "httproute", req.NamespacedName)
 	return ctrl.Result{}, nil
 }

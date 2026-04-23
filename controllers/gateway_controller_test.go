@@ -46,6 +46,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	gatewayapi "sigs.k8s.io/gateway-api/apis/v1"
 
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/gateway-api/conformance/utils/kubernetes"
 )
 
@@ -72,26 +73,25 @@ func conditionStateIs(gw *gatewayapi.Gateway, condType string, status *metav1.Co
 
 // setGatewayStatus is a helper function to update the status of a Gateway in the test environment
 func setGatewayStatus(nn types.NamespacedName, newCondition *metav1.Condition, address *gatewayapi.GatewayStatusAddress) error {
-	gw := &gatewayapi.Gateway{}
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		gw := &gatewayapi.Gateway{}
 
-	if err := k8sClient.Get(context.TODO(), nn, gw); err != nil {
-		return err
-	}
+		if err := k8sClient.Get(context.TODO(), nn, gw); err != nil {
+			return err
+		}
 
-	if newCondition != nil {
-		newCondition.ObservedGeneration = gw.ObjectMeta.Generation
-		meta.SetStatusCondition(&gw.Status.Conditions, *newCondition)
-		GinkgoT().Logf("update gw: %+v conditions: %+v\n", gw, newCondition)
-	}
-	if address != nil {
-		gw.Status.Addresses = []gatewayapi.GatewayStatusAddress{}
-		gw.Status.Addresses = append(gw.Status.Addresses, *address)
-	}
+		if newCondition != nil {
+			newCondition.ObservedGeneration = gw.ObjectMeta.Generation
+			meta.SetStatusCondition(&gw.Status.Conditions, *newCondition)
+			GinkgoT().Logf("update gw: %+v conditions: %+v\n", gw, newCondition)
+		}
+		if address != nil {
+			gw.Status.Addresses = []gatewayapi.GatewayStatusAddress{}
+			gw.Status.Addresses = append(gw.Status.Addresses, *address)
+		}
 
-	if err := k8sClient.Status().Update(context.TODO(), gw); err != nil {
-		return err
-	}
-	return nil
+		return k8sClient.Status().Update(context.TODO(), gw)
+	})
 }
 
 // Shared resource template used by both ready and non-ready blueprints

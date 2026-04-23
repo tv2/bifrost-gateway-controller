@@ -44,7 +44,7 @@ import (
 var _ = Describe("statusIsReady", func() {
 
 	It("Should return true for empty templates", func() {
-		ready, err := statusIsReady(nil)
+		ready, _, err := statusIsReady(nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(ready).To(BeTrue())
 	})
@@ -53,7 +53,7 @@ var _ = Describe("statusIsReady", func() {
 		templates := []*ResourceTemplateState{
 			{Resources: []ResourceComposite{{Current: nil}}},
 		}
-		ready, err := statusIsReady(templates)
+		ready, _, err := statusIsReady(templates)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(ready).To(BeFalse())
 	})
@@ -77,7 +77,7 @@ var _ = Describe("statusIsReady", func() {
 		templates := []*ResourceTemplateState{
 			{Resources: []ResourceComposite{{Current: u}}},
 		}
-		ready, err := statusIsReady(templates)
+		ready, _, err := statusIsReady(templates)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(ready).To(BeFalse())
 	})
@@ -91,7 +91,7 @@ var _ = Describe("statusIsReady", func() {
 		templates := []*ResourceTemplateState{
 			{Resources: []ResourceComposite{{Current: u}}},
 		}
-		ready, err := statusIsReady(templates)
+		ready, _, err := statusIsReady(templates)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(ready).To(BeTrue())
 	})
