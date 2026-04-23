@@ -40,7 +40,7 @@ import (
 // Given a slice of template states, compute the overall
 // health/readiness status.  The general approach is to test for a
 // `Ready` status condition, which is implemented through kstatus.
-func statusIsReady(templates []*ResourceTemplateState) (bool, string, error) {
+func statusIsReady(templates []*ResourceTemplateState) (ready bool, reason string, err error) {
 	for _, tmpl := range templates {
 		for _, res := range tmpl.Resources {
 			if res.Current == nil {

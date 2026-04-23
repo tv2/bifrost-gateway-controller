@@ -290,9 +290,7 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		logger.Error(err, "unable to update status condition due to sub-resource status error", "gateway", req.NamespacedName)
 		return ctrl.Result{}, err
 	}
-	if !isReady {
-		logger.V(1).Info("gateway not ready", "gateway", req.NamespacedName, "reason", readyReason)
-	}
+	logger.V(1).Info("gateway readiness", "gateway", req.NamespacedName, "ready", isReady, "reason", readyReason)
 	if isReady && statusUpdateOK && progStatus == metav1.ConditionTrue {
 		status = metav1.ConditionTrue
 	}
