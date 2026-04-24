@@ -304,10 +304,7 @@ func unstructuredToGVR(r ControllerClient, u *unstructured.Unstructured) (*schem
 		return nil, false, fmt.Errorf("cannot find REST mapping for '%s/%s' (group='%s', version='%s'): %w", u.GetKind(), u.GetName(), gv.Group, gv.Version, err)
 	}
 
-	isNamespaced := false
-	if mapping.Scope.Name() == meta.RESTScopeNameNamespace {
-		isNamespaced = true
-	}
+	isNamespaced := mapping.Scope.Name() == meta.RESTScopeNameNamespace
 
 	return &schema.GroupVersionResource{
 		Group:    gv.Group,

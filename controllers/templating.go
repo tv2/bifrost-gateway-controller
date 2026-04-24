@@ -301,7 +301,7 @@ func template2maps(ctx context.Context, tmpl *template.Template, tmplValues *Tem
 		return nil, err
 	}
 
-	rawSlice := bytes.SplitN(renderBuffer.Bytes(), []byte("---"), -1)
+	rawSlice := bytes.Split(renderBuffer.Bytes(), []byte("---"))
 	resources := make([]map[string]any, 0, len(rawSlice))
 	for _, raw := range rawSlice {
 		r := map[string]any{}
