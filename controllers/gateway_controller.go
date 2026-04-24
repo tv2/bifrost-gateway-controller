@@ -127,7 +127,7 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	gwcb, err := lookupGatewayClassBlueprint(ctx, r, gwc)
 	if err != nil {
 		logger.Info("blueprint not found for GatewayClass, requeuing", "gatewayClass", gwc.Name, "parametersRef", gwc.Spec.ParametersRef)
-		return ctrl.Result{RequeueAfter: dependencyMissingRequeuePeriod}, fmt.Errorf("parameters for GatewayClass %q not found: %w", gwc.ObjectMeta.Name, err)
+		return ctrl.Result{RequeueAfter: dependencyMissingRequeuePeriod}, fmt.Errorf("parameters for GatewayClass %q not found: %w", gwc.Name, err)
 	}
 
 	debugContext = append(debugContext, "blueprint", gwcb.Name)
@@ -148,7 +148,7 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, fmt.Errorf("cannot convert gateway to map: %w", err)
 	}
 
-	values, err := lookupValues(ctx, r, gwc.Name, gwcb, gw.ObjectMeta.Namespace, gw.ObjectMeta.Name)
+	values, err := lookupValues(ctx, r, gwc.Name, gwcb, gw.Namespace, gw.Name)
 	if err != nil {
 		logger.Error(err, "cannot lookup values", debugContext...)
 		return ctrl.Result{}, fmt.Errorf("cannot lookup values: %w", err)
@@ -253,7 +253,7 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			Type:               string(gatewayapi.ListenerConditionAccepted),
 			Status:             metav1.ConditionTrue,
 			Reason:             string(gatewayapi.ListenerReasonAccepted),
-			ObservedGeneration: gw.ObjectMeta.Generation})
+			ObservedGeneration: gw.Generation})
 	}
 
 	// Gateway was accepted as 'ours'
@@ -261,7 +261,7 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		Type:               string(gatewayapi.GatewayConditionAccepted),
 		Status:             metav1.ConditionTrue,
 		Reason:             string(gatewayapi.GatewayReasonAccepted),
-		ObservedGeneration: gw.ObjectMeta.Generation})
+		ObservedGeneration: gw.Generation})
 
 	// Consider Gateway as 'programmed' when all resources have
 	// been templated and applied
@@ -281,7 +281,7 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		Status:             progStatus,
 		Reason:             progReason,
 		Message:            progMsg,
-		ObservedGeneration: gw.ObjectMeta.Generation})
+		ObservedGeneration: gw.Generation})
 
 	// Set `Ready` condition based on child resource statuses, status update and programmed status
 	status := metav1.ConditionFalse
@@ -295,10 +295,10 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		status = metav1.ConditionTrue
 	}
 	meta.SetStatusCondition(&gw.Status.Conditions, metav1.Condition{
-		Type:               string(gatewayapi.GatewayConditionReady),
+		Type:               string(gatewayapi.GatewayConditionReady), //nolint:staticcheck // "Ready" is reserved for future use
 		Status:             status,
-		Reason:             string(gatewayapi.GatewayReasonReady),
-		ObservedGeneration: gw.ObjectMeta.Generation})
+		Reason:             string(gatewayapi.GatewayReasonReady), //nolint:staticcheck // "Ready" is reserved for future use
+		ObservedGeneration: gw.Generation})
 
 	if !equality.Semantic.DeepEqual(beforeStatusUpdate.Status, gw.Status) {
 		if err := r.Client().Status().Update(ctx, &gw); err != nil {
@@ -381,10 +381,10 @@ func filterHTTPRoutesForGateway(gw *gatewayapi.Gateway, rtList []*gatewayapi.HTT
 		for _, pRef := range rt.Spec.ParentRefs {
 			if (pRef.Group != nil && *pRef.Group != gatewayapi.Group(gatewayapi.GroupName)) ||
 				(pRef.Kind != nil && *pRef.Kind != gatewayapi.Kind("Gateway")) ||
-				(pRef.Namespace != nil && *pRef.Namespace != gatewayapi.Namespace(gw.ObjectMeta.Namespace)) ||
+				(pRef.Namespace != nil && *pRef.Namespace != gatewayapi.Namespace(gw.Namespace)) ||
 				// Unspecified namespace means use HTTPRoute namespace
-				(pRef.Namespace == nil && rt.ObjectMeta.Namespace != gw.ObjectMeta.Namespace) ||
-				(pRef.Name != gatewayapi.ObjectName(gw.ObjectMeta.Name)) {
+				(pRef.Namespace == nil && rt.Namespace != gw.Namespace) ||
+				(pRef.Name != gatewayapi.ObjectName(gw.Name)) {
 				// Skip as ParentRef does not refer to Gateway
 				continue
 			}
