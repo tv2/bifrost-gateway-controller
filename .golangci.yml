@@ -65,6 +65,15 @@ linters:
       - common-false-positives
       - legacy
       - std-error-handling
+    rules:
+      - linters: [staticcheck]
+        text: "QF1004|QF1007|QF1008"
+      - linters: [staticcheck]
+        text: "SA1019"
+        path: controllers/gateway_controller\.go
+      - linters: [gocritic]
+        text: "importShadow"
+        path: controllers/gatewayclass_controller\.go
     paths:
       - test
       - third_party$

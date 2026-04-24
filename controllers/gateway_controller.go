@@ -295,9 +295,8 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		status = metav1.ConditionTrue
 	}
 	meta.SetStatusCondition(&gw.Status.Conditions, metav1.Condition{
-		Type:   string(gatewayapi.GatewayConditionReady),
-		Status: status,
-		//nolint:staticcheck // ready status is deprecated in gw-api 0.7.0 but since our implementation fits pre-0.7.0 and intended future use we keep the code
+		Type:               string(gatewayapi.GatewayConditionReady),
+		Status:             status,
 		Reason:             string(gatewayapi.GatewayReasonReady),
 		ObservedGeneration: gw.ObjectMeta.Generation})
 
