@@ -160,10 +160,20 @@ install: manifests  ## Install CRDs into the K8s cluster specified in ~/.kube/co
 uninstall: manifests  ## Uninstall CRDs from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
 	kustomize build config/crd | kubectl delete --ignore-not-found=$(ignore-not-found) -f -
 
+CONTROLLER_ARGS ?= --zap-log-level=1
+
 .PHONY: deploy
 deploy: manifests  ## Deploy controller to the K8s cluster specified in ~/.kube/config.
 	cd config/manager && kustomize edit set image controller=${IMG}
 	kustomize build config/kind | kubectl apply -f -
+	@JSON_ARGS=$$(echo '$(CONTROLLER_ARGS)' | awk '{for(i=1;i<=NF;i++) printf "\"%s\",", $$i}' | sed 's/,$$//'); \
+	kubectl patch deployment/bifrost-gateway-controller-controller-manager -n bifrost-gateway-controller-system \
+		--type=json -p="[{\"op\":\"replace\",\"path\":\"/spec/template/spec/containers/0/args\",\"value\":[$$JSON_ARGS]}]"
+
+.PHONY: redeploy
+redeploy: container deploy  ## Build, deploy, and restart the controller on the KIND cluster.
+	kubectl rollout restart deployment -n bifrost-gateway-controller-system bifrost-gateway-controller-controller-manager
+	kubectl rollout status deployment -n bifrost-gateway-controller-system bifrost-gateway-controller-controller-manager --timeout=90s
 
 .PHONY: undeploy
 undeploy: ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.

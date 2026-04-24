@@ -1,36 +1,8 @@
-linters-settings:
-  errcheck:
-    check-type-assertions: true
-  goconst:
-    min-len: 2
-    min-occurrences: 3
-  gocritic:
-    enabled-tags:
-      - diagnostic
-      - experimental
-      - opinionated
-      - performance
-      - style
-  govet:
-    shadow: true
-    enable:
-      - fieldalignment
-  nolintlint:
-    require-explanation: true
-    require-specific: true
-  revive:
-    rules:
-    - name: dot-imports
-      arguments:
-      - allowedPackages:
-        - github.com/onsi/ginkgo/v2
-        - github.com/onsi/gomega
-  gosec:
-    excludes:
-    - G115
-
+version: "2"
+run:
+  issues-exit-code: 1
 linters:
-  disable-all: true
+  default: none
   enable:
     - bodyclose
     - dogsled
@@ -39,30 +11,81 @@ linters:
     - exhaustive
     - goconst
     - gocritic
-    - goimports
     - gocyclo
     - gosec
-    - gosimple
     - govet
     - ineffassign
     - misspell
-    - nolintlint
     - nakedret
+    - nolintlint
     - prealloc
     - predeclared
     - revive
     - staticcheck
-    - stylecheck
     - thelper
     - tparallel
-    - typecheck
     - unconvert
     - unparam
     - unused
     - whitespace
-
-run:
-  issues-exit-code: 1
-issues:
-  exclude-dirs:
-    - test
+  settings:
+    errcheck:
+      check-type-assertions: true
+    goconst:
+      min-len: 2
+      min-occurrences: 3
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - experimental
+        - opinionated
+        - performance
+        - style
+    gosec:
+      excludes:
+        - G115
+    govet:
+      enable:
+        - fieldalignment
+        - shadow
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+    revive:
+      rules:
+        - name: dot-imports
+          arguments:
+            - allowedPackages:
+                - github.com/onsi/ginkgo/v2
+                - github.com/onsi/gomega
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters: [staticcheck]
+        text: "QF1004|QF1007|QF1008"
+      - linters: [staticcheck]
+        text: "SA1019"
+        path: controllers/gateway_controller\.go
+      - linters: [gocritic]
+        text: "importShadow"
+        path: controllers/gatewayclass_controller\.go
+    paths:
+      - test
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  enable:
+    - goimports
+  exclusions:
+    generated: lax
+    paths:
+      - test
+      - third_party$
+      - builtin$
+      - examples$

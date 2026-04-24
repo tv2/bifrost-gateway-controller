@@ -43,12 +43,12 @@ wait-ready-external-dns-test:
 	until kubectl wait pods -l app.kubernetes.io/instance=external-dns --for condition=Ready --timeout=120s     ; do echo "."; sleep 1; done
 
 #################
-GATEWAY_API_VERSION ?= v1.2.1
+GATEWAY_API_VERSION ?= v1.5.1
 
 .PHONY: gateway-api-upstream-get
 gateway-api-upstream-get:
 	mkdir upstream-gateway-api
-	curl -sL https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml > upstream-gateway-api/crds.yaml
+	curl -sL https://github.com/kubernetes-sigs/gateway-api/releases/download/$(GATEWAY_API_VERSION)/standard-install.yaml > upstream-gateway-api/crds.yaml
 
 .PHONY: deploy-gateway-api
 deploy-gateway-api:
