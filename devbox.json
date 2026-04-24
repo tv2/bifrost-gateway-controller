@@ -6,7 +6,7 @@
     "gettext@0.25.1",
     "gnumake@4.4.1",
     "go@1.26.1",
-    "golangci-lint@1.64.8",
+    "golangci-lint@2.11.4",
     "helm-docs@1.14.2",
     "kind@0.24.0",
     "ko@0.18.0",
