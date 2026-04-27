@@ -15,7 +15,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: jetify-com/devbox-install-action@22b0f5500b14df4ea357ce673fbd4ced940ed6a1 # tag=v0.13.0
+      - uses: jetify-com/devbox-install-action@8c6a66ed6273138b1915457069de78cb52fe3bd7 # tag=v0.15.0
         with:
           enable-cache: true
 
@@ -40,7 +40,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: jetify-com/devbox-install-action@22b0f5500b14df4ea357ce673fbd4ced940ed6a1 # tag=v0.13.0
+      - uses: jetify-com/devbox-install-action@8c6a66ed6273138b1915457069de78cb52fe3bd7 # tag=v0.15.0
         with:
           enable-cache: true
 
@@ -58,7 +58,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: jetify-com/devbox-install-action@22b0f5500b14df4ea357ce673fbd4ced940ed6a1 # tag=v0.13.0
+      - uses: jetify-com/devbox-install-action@8c6a66ed6273138b1915457069de78cb52fe3bd7 # tag=v0.15.0
         with:
           enable-cache: true
 
