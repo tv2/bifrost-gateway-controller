@@ -3,6 +3,7 @@ package controllers
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -618,6 +619,195 @@ var _ = Describe("lookupValues", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(values["defKey"]).To(Equal("second-default")) // Alphabetically-last policy name wins for defaults
 		Expect(values["ovrKey"]).To(Equal("first-override")) // Alphabetically-first policy name wins for overrides
+	})
+
+	It("Should resolve same-level conflicts by creation timestamp (oldest wins)", func() {
+		gwcb := &gwcapi.GatewayClassBlueprint{
+			ObjectMeta: metav1.ObjectMeta{Name: "bp"},
+		}
+		t1 := metav1.NewTime(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+		t2 := metav1.NewTime(time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC))
+		// Two global GatewayClassConfigs — older one is "established", newer is "challenger"
+		gwccOlder := &gwcapi.GatewayClassConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "policy-older", Namespace: "controller-system", CreationTimestamp: t1},
+			Spec: gwcapi.GatewayClassConfigSpec{
+				TemplateValues: gwcapi.TemplateValues{
+					Default:  jsonRaw(`{"defKey": "older-default"}`),  // Defaults: last in sorted order wins → newer wins
+					Override: jsonRaw(`{"ovrKey": "older-override"}`), // Overrides: first in sorted order wins → older wins
+				},
+				TargetRef: gatewayv1a2.NamespacedPolicyTargetReference{
+					Group: gatewayapi.GroupName, Kind: "GatewayClass", Name: "test-class",
+				},
+			},
+		}
+		gwccNewer := &gwcapi.GatewayClassConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "policy-newer", Namespace: "controller-system", CreationTimestamp: t2},
+			Spec: gwcapi.GatewayClassConfigSpec{
+				TemplateValues: gwcapi.TemplateValues{
+					Default:  jsonRaw(`{"defKey": "newer-default"}`),
+					Override: jsonRaw(`{"ovrKey": "newer-override"}`),
+				},
+				TargetRef: gatewayv1a2.NamespacedPolicyTargetReference{
+					Group: gatewayapi.GroupName, Kind: "GatewayClass", Name: "test-class",
+				},
+			},
+		}
+		r := newFakeClient(gwccOlder, gwccNewer)
+		values, err := lookupValues(ctx, r, "test-class", gwcb, "default", "test-gw")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(values["defKey"]).To(Equal("newer-default"))  // Newer (last in order) wins for defaults
+		Expect(values["ovrKey"]).To(Equal("older-override")) // Older (first in order) wins for overrides
+	})
+
+	It("Should resolve conflicts between two GatewayConfigs targeting the same Gateway", func() {
+		gwcb := &gwcapi.GatewayClassBlueprint{
+			ObjectMeta: metav1.ObjectMeta{Name: "bp"},
+		}
+		gwcFirst := &gwcapi.GatewayConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "aaa-gw-policy", Namespace: "default"},
+			Spec: gwcapi.GatewayConfigSpec{
+				TemplateValues: gwcapi.TemplateValues{
+					Default:  jsonRaw(`{"defKey": "first-default"}`),
+					Override: jsonRaw(`{"ovrKey": "first-override"}`),
+				},
+				TargetRef: gatewayv1a2.NamespacedPolicyTargetReference{
+					Group: gatewayapi.GroupName, Kind: "Gateway", Name: "test-gw", Namespace: nsPtr("default"),
+				},
+			},
+		}
+		gwcSecond := &gwcapi.GatewayConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "zzz-gw-policy", Namespace: "default"},
+			Spec: gwcapi.GatewayConfigSpec{
+				TemplateValues: gwcapi.TemplateValues{
+					Default:  jsonRaw(`{"defKey": "second-default"}`),
+					Override: jsonRaw(`{"ovrKey": "second-override"}`),
+				},
+				TargetRef: gatewayv1a2.NamespacedPolicyTargetReference{
+					Group: gatewayapi.GroupName, Kind: "Gateway", Name: "test-gw", Namespace: nsPtr("default"),
+				},
+			},
+		}
+		r := newFakeClient(gwcFirst, gwcSecond)
+		values, err := lookupValues(ctx, r, "test-class", gwcb, "default", "test-gw")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(values["defKey"]).To(Equal("second-default")) // Alphabetically-last wins for defaults
+		Expect(values["ovrKey"]).To(Equal("first-override")) // Alphabetically-first wins for overrides
+	})
+
+	It("Should resolve conflicts between two namespace-targeting GatewayConfigs", func() {
+		gwcb := &gwcapi.GatewayClassBlueprint{
+			ObjectMeta: metav1.ObjectMeta{Name: "bp"},
+		}
+		gwcFirst := &gwcapi.GatewayConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "aaa-ns-policy", Namespace: "default"},
+			Spec: gwcapi.GatewayConfigSpec{
+				TemplateValues: gwcapi.TemplateValues{
+					Default:  jsonRaw(`{"defKey": "first-default"}`),
+					Override: jsonRaw(`{"ovrKey": "first-override"}`),
+				},
+				TargetRef: gatewayv1a2.NamespacedPolicyTargetReference{
+					Kind: "Namespace", Name: "default",
+				},
+			},
+		}
+		gwcSecond := &gwcapi.GatewayConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "zzz-ns-policy", Namespace: "default"},
+			Spec: gwcapi.GatewayConfigSpec{
+				TemplateValues: gwcapi.TemplateValues{
+					Default:  jsonRaw(`{"defKey": "second-default"}`),
+					Override: jsonRaw(`{"ovrKey": "second-override"}`),
+				},
+				TargetRef: gatewayv1a2.NamespacedPolicyTargetReference{
+					Kind: "Namespace", Name: "default",
+				},
+			},
+		}
+		r := newFakeClient(gwcFirst, gwcSecond)
+		values, err := lookupValues(ctx, r, "test-class", gwcb, "default", "test-gw")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(values["defKey"]).To(Equal("second-default")) // Alphabetically-last wins for defaults
+		Expect(values["ovrKey"]).To(Equal("first-override")) // Alphabetically-first wins for overrides
+	})
+
+	It("Should resolve conflicts between two local GatewayClassConfigs targeting GatewayClass", func() {
+		gwcb := &gwcapi.GatewayClassBlueprint{
+			ObjectMeta: metav1.ObjectMeta{Name: "bp"},
+		}
+		gwccFirst := &gwcapi.GatewayClassConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "aaa-local", Namespace: "default"},
+			Spec: gwcapi.GatewayClassConfigSpec{
+				TemplateValues: gwcapi.TemplateValues{
+					Default:  jsonRaw(`{"defKey": "first-default"}`),
+					Override: jsonRaw(`{"ovrKey": "first-override"}`),
+				},
+				TargetRef: gatewayv1a2.NamespacedPolicyTargetReference{
+					Group: gatewayapi.GroupName, Kind: "GatewayClass", Name: "test-class",
+				},
+			},
+		}
+		gwccSecond := &gwcapi.GatewayClassConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "zzz-local", Namespace: "default"},
+			Spec: gwcapi.GatewayClassConfigSpec{
+				TemplateValues: gwcapi.TemplateValues{
+					Default:  jsonRaw(`{"defKey": "second-default"}`),
+					Override: jsonRaw(`{"ovrKey": "second-override"}`),
+				},
+				TargetRef: gatewayv1a2.NamespacedPolicyTargetReference{
+					Group: gatewayapi.GroupName, Kind: "GatewayClass", Name: "test-class",
+				},
+			},
+		}
+		r := newFakeClient(gwccFirst, gwccSecond)
+		values, err := lookupValues(ctx, r, "test-class", gwcb, "default", "test-gw")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(values["defKey"]).To(Equal("second-default")) // Alphabetically-last wins for defaults
+		Expect(values["ovrKey"]).To(Equal("first-override")) // Alphabetically-first wins for overrides
+	})
+
+	It("Should not let same-level conflict leak across hierarchy levels", func() {
+		gwcb := &gwcapi.GatewayClassBlueprint{
+			ObjectMeta: metav1.ObjectMeta{Name: "bp"},
+		}
+		// Two global GatewayClassConfigs conflict on "key"
+		gwccA := &gwcapi.GatewayClassConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "aaa-global", Namespace: "controller-system"},
+			Spec: gwcapi.GatewayClassConfigSpec{
+				TemplateValues: gwcapi.TemplateValues{
+					Default: jsonRaw(`{"key": "global-a"}`),
+				},
+				TargetRef: gatewayv1a2.NamespacedPolicyTargetReference{
+					Group: gatewayapi.GroupName, Kind: "GatewayClass", Name: "test-class",
+				},
+			},
+		}
+		gwccB := &gwcapi.GatewayClassConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "zzz-global", Namespace: "controller-system"},
+			Spec: gwcapi.GatewayClassConfigSpec{
+				TemplateValues: gwcapi.TemplateValues{
+					Default: jsonRaw(`{"key": "global-b"}`),
+				},
+				TargetRef: gatewayv1a2.NamespacedPolicyTargetReference{
+					Group: gatewayapi.GroupName, Kind: "GatewayClass", Name: "test-class",
+				},
+			},
+		}
+		// A more-specific GatewayConfig default at Gateway level should still win over both
+		gwc := &gwcapi.GatewayConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "gw-policy", Namespace: "default"},
+			Spec: gwcapi.GatewayConfigSpec{
+				TemplateValues: gwcapi.TemplateValues{
+					Default: jsonRaw(`{"key": "gw-specific"}`),
+				},
+				TargetRef: gatewayv1a2.NamespacedPolicyTargetReference{
+					Group: gatewayapi.GroupName, Kind: "Gateway", Name: "test-gw", Namespace: nsPtr("default"),
+				},
+			},
+		}
+		r := newFakeClient(gwccA, gwccB, gwc)
+		values, err := lookupValues(ctx, r, "test-class", gwcb, "default", "test-gw")
+		Expect(err).NotTo(HaveOccurred())
+		// The more-specific GatewayConfig default should win, regardless of the global conflict
+		Expect(values["key"]).To(Equal("gw-specific"))
 	})
 
 	// --- 5. Nested values ---
