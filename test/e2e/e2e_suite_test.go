@@ -87,7 +87,7 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred())
 	Expect(cfg).NotTo(BeNil())
 
-	err = gatewayapi.AddToScheme(scheme.Scheme)
+	err = gatewayapi.Install(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
 
 	err = gcapi.AddToScheme(scheme.Scheme)

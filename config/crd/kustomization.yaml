@@ -7,8 +7,23 @@ resources:
 - bases/gateway.tv2.dk_gatewayconfigs.yaml
 #+kubebuilder:scaffold:crdkustomizeresource
 
-patchesStrategicMerge:
-- patches/label-as-policy.yaml
+patches:
+- patch: |-
+    # GEP-713 suggest labelling policy CRDs for tooling integration.
+    # See https://gateway-api.sigs.k8s.io/geps/gep-713/#kubectl-plugin
+    apiVersion: apiextensions.k8s.io/v1
+    kind: CustomResourceDefinition
+    metadata:
+      name: gatewayclassconfigs.gateway.tv2.dk
+      labels:
+        gateway.networking.k8s.io/policy: "true"
+- patch: |-
+    apiVersion: apiextensions.k8s.io/v1
+    kind: CustomResourceDefinition
+    metadata:
+      name: gatewayconfigs.gateway.tv2.dk
+      labels:
+        gateway.networking.k8s.io/policy: "true"
 # [WEBHOOK] To enable webhook, uncomment all the sections with [WEBHOOK] prefix.
 # patches here are for enabling the conversion webhook for each CRD
 #- patches/webhook_in_gatewayclassblueprint.yaml
