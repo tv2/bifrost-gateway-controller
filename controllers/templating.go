@@ -122,6 +122,7 @@ func parseSingleTemplate(tmplKey, tmpl string) (*template.Template, error) {
 // Initialize ResourceTemplateState slice by parsing templates
 func parseTemplates(resourceTemplates map[string]string) ([]*ResourceTemplateState, error) {
 	var err error
+	logger := ctrl.Log.WithName("templating")
 
 	templates := make([]*ResourceTemplateState, 0, len(resourceTemplates))
 
@@ -141,6 +142,12 @@ func parseTemplates(resourceTemplates map[string]string) ([]*ResourceTemplateSta
 	// Sort to increase predictability
 	sort.SliceStable(templates, func(i, j int) bool { return templates[i].TemplateName < templates[j].TemplateName })
 
+	templateNames := make([]string, 0, len(templates))
+	for _, t := range templates {
+		templateNames = append(templateNames, t.TemplateName)
+	}
+	logger.V(1).Info("parsed templates", "count", len(templates), "names", templateNames)
+
 	return templates, nil
 }
 
@@ -159,17 +166,18 @@ func renderTemplates(ctx context.Context, r ControllerDynClient, parent metav1.O
 	for tIdx := range templates {
 		tmpl := templates[tIdx]
 		if len(tmpl.Resources) == 0 {
-			tmpl.Resources, err = template2Composite(r, tmpl.Template, values)
+			tmpl.Resources, err = template2Composite(ctx, r, tmpl.Template, values)
 			if err != nil {
 				if isFinalAttempt {
 					logger.Error(err, "cannot render template", "templateName", tmpl.TemplateName)
-					// FIXME: These are convenient, but we should have a better logging design, i.e. it should be possible to enable rendering errors only
-					fmt.Printf("Template:\n%s\n", tmpl.StringTemplate)
-					fmt.Printf("Template values:\n%+v\n", values)
+					logger.V(2).Info("template render failure details", "templateName", tmpl.TemplateName, "template", tmpl.StringTemplate, "values", values)
 					metricTemplateErrs.Inc()
+				} else {
+					logger.V(1).Info("template render deferred (missing dependency)", "templateName", tmpl.TemplateName, "error", err)
 				}
 				continue
 			}
+			logger.V(1).Info("template rendered", "templateName", tmpl.TemplateName, "resources", len(tmpl.Resources))
 		}
 		rendered++
 		for resIdx := range tmpl.Resources {
@@ -184,12 +192,12 @@ func renderTemplates(ctx context.Context, r ControllerDynClient, parent metav1.O
 				metricResourceGet.Inc()
 				res.Current, err = dynamicClient.Get(ctx, res.Rendered.GetName(), metav1.GetOptions{})
 				if err != nil {
-					logger.Error(err, "cannot get current resource", "templateName", tmpl.TemplateName, "resIdx", resIdx)
+					logger.V(1).Info("current resource not yet available", "templateName", tmpl.TemplateName, "resourceName", res.Rendered.GetName(), "gvr", res.GVR, "error", err)
 					continue
 				}
-				logger.Info("update current", "templatename", tmpl.TemplateName, "idx", resIdx, "current", res.Current)
+				logger.V(1).Info("fetched current resource", "templateName", tmpl.TemplateName, "resourceName", res.Rendered.GetName(), "gvr", res.GVR)
 			} else {
-				logger.Info("already have update current", "templatename", tmpl.TemplateName, "idx", resIdx, "current", res.Current)
+				logger.V(1).Info("current resource already cached", "templateName", tmpl.TemplateName, "resourceName", res.Rendered.GetName())
 			}
 		}
 		exists++
@@ -226,28 +234,32 @@ func applyTemplates(ctx context.Context, r ControllerDynClient, parent metav1.Ob
 	for _, tmpl := range templates {
 		for _, res := range tmpl.Resources {
 			if res.Rendered == nil || res.GVR == nil {
-				// We do not yet have enough information to render/apply this resource
+				logger.V(1).Info("skipping unrendered resource", "templateName", tmpl.TemplateName)
 				continue
 			}
 			if res.IsNamespaced {
 				// Only namespaced objects can have namespaced object as owner
 				err = ctrl.SetControllerReference(parent, res.Rendered, r.Scheme())
 				if err != nil {
-					logger.Error(err, "cannot set owner for namespaced template", "templateName", tmpl.TemplateName)
+					logger.Error(err, "cannot set owner for namespaced template", "templateName", tmpl.TemplateName, "resourceName", res.Rendered.GetName())
 					errorCnt++
 				} else {
 					ns := parent.GetNamespace()
 					err = patchUnstructured(ctx, r, res.Rendered, res.GVR, &ns)
 					if err != nil {
-						logger.Error(err, "cannot apply namespaced template", "templateName", tmpl.TemplateName)
+						logger.Error(err, "cannot apply namespaced template", "templateName", tmpl.TemplateName, "resourceName", res.Rendered.GetName(), "namespace", ns, "gvr", res.GVR)
 						errorCnt++
+					} else {
+						logger.V(1).Info("applied namespaced resource", "templateName", tmpl.TemplateName, "resourceName", res.Rendered.GetName(), "namespace", ns, "gvr", res.GVR)
 					}
 				}
 			} else {
 				err = patchUnstructured(ctx, r, res.Rendered, res.GVR, nil)
 				if err != nil {
-					logger.Error(err, "cannot apply cluster-scoped template", "templateName", tmpl.TemplateName)
+					logger.Error(err, "cannot apply cluster-scoped template", "templateName", tmpl.TemplateName, "resourceName", res.Rendered.GetName(), "gvr", res.GVR)
 					errorCnt++
+				} else {
+					logger.V(1).Info("applied cluster-scoped resource", "templateName", tmpl.TemplateName, "resourceName", res.Rendered.GetName(), "gvr", res.GVR)
 				}
 			}
 		}
@@ -261,34 +273,35 @@ func applyTemplates(ctx context.Context, r ControllerDynClient, parent metav1.Ob
 
 // This function is made available to templates as 'toYaml'
 func helperToYaml(v interface{}) string {
+	logger := ctrl.Log.WithName("templating")
 	data, err := sigsyaml.Marshal(v)
 	if err != nil {
+		logger.V(1).Info("toYaml marshal error", "error", err)
 		return ""
 	}
 	return strings.TrimSuffix(string(data), "\n")
 }
 
-func templateRender(tmpl *template.Template, templateValues *TemplateValues) (*bytes.Buffer, error) {
+func templateRender(ctx context.Context, tmpl *template.Template, templateValues *TemplateValues) (*bytes.Buffer, error) {
+	logger := log.FromContext(ctx)
 	var buffer bytes.Buffer
 
 	if err := tmpl.Execute(io.Writer(&buffer), templateValues); err != nil {
 		return nil, err
 	}
 
-	// FIXME: These are convenient, but we should have a better logging design, i.e. it should be possible to enable rendering info only
-	fmt.Printf("Rendered:\n%s\n", buffer.Bytes())
-	fmt.Printf("Values:\n%+v\n", templateValues)
+	logger.V(2).Info("rendered template output", "output", buffer.String(), "values", templateValues)
 
 	return &buffer, nil
 }
 
-func template2maps(tmpl *template.Template, tmplValues *TemplateValues) ([]map[string]any, error) {
-	renderBuffer, err := templateRender(tmpl, tmplValues)
+func template2maps(ctx context.Context, tmpl *template.Template, tmplValues *TemplateValues) ([]map[string]any, error) {
+	renderBuffer, err := templateRender(ctx, tmpl, tmplValues)
 	if err != nil {
 		return nil, err
 	}
 
-	rawSlice := bytes.SplitN(renderBuffer.Bytes(), []byte("---"), -1)
+	rawSlice := bytes.Split(renderBuffer.Bytes(), []byte("---"))
 	resources := make([]map[string]any, 0, len(rawSlice))
 	for _, raw := range rawSlice {
 		r := map[string]any{}
@@ -304,8 +317,8 @@ func template2maps(tmpl *template.Template, tmplValues *TemplateValues) ([]map[s
 	return resources, nil
 }
 
-func template2Composite(r ControllerClient, tmpl *template.Template, tmplValues *TemplateValues) ([]ResourceComposite, error) {
-	rawResources, err := template2maps(tmpl, tmplValues)
+func template2Composite(ctx context.Context, r ControllerClient, tmpl *template.Template, tmplValues *TemplateValues) ([]ResourceComposite, error) {
+	rawResources, err := template2maps(ctx, tmpl, tmplValues)
 	if err != nil {
 		return nil, err
 	}

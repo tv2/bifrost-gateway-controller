@@ -33,7 +33,6 @@ package controllers
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sort"
 
@@ -47,6 +46,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/json"
 	"k8s.io/client-go/dynamic"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 	gatewayapi "sigs.k8s.io/gateway-api/apis/v1"
 
 	gwcapi "github.com/tv2/bifrost-gateway-controller/apis/gateway.tv2.dk/v1alpha1"
@@ -82,12 +82,13 @@ func lookupGatewayClass(ctx context.Context, r ControllerClient, name gatewayapi
 }
 
 func lookupGatewayClassBlueprint(ctx context.Context, r ControllerClient, gwc *gatewayapi.GatewayClass) (*gwcapi.GatewayClassBlueprint, error) {
+	logger := log.FromContext(ctx)
 	if gwc.Spec.ParametersRef == nil {
-		return nil, errors.New("GatewayClass without parameters")
+		return nil, fmt.Errorf("GatewayClass '%q' has no parametersRef", gwc.Name)
 	}
 
 	if gwc.Spec.ParametersRef.Kind != "GatewayClassBlueprint" || gwc.Spec.ParametersRef.Group != "gateway.tv2.dk" {
-		return nil, errors.New("parameter kind/group is not a valid GatewayClassBlueprint")
+		return nil, fmt.Errorf("GatewayClass '%q' parametersRef has invalid kind/group '%s/%s'", gwc.Name, gwc.Spec.ParametersRef.Group, gwc.Spec.ParametersRef.Kind)
 	}
 
 	var gwcb gwcapi.GatewayClassBlueprint
@@ -95,6 +96,7 @@ func lookupGatewayClassBlueprint(ctx context.Context, r ControllerClient, gwc *g
 		return nil, err
 	}
 
+	logger.V(1).Info("looked up GatewayClassBlueprint", "gatewayClass", gwc.Name, "blueprint", gwcb.Name)
 	return &gwcb, nil
 }
 
@@ -136,6 +138,8 @@ func merge(a, b any) any {
 //nolint:gocyclo // This function have a repeating character and this not as complex as the number of ifs may indicate
 func lookupValues(ctx context.Context, r ControllerClient, gatewayClassName string, gwcb *gwcapi.GatewayClassBlueprint,
 	gwNamespace string, gwName string) (map[string]any, error) {
+	logger := log.FromContext(ctx)
+	logger.V(1).Info("looking up values", "gatewayClass", gatewayClassName, "namespace", gwNamespace, "name", gwName)
 	values := map[string]any{}
 	var err error
 
@@ -175,6 +179,8 @@ func lookupValues(ctx context.Context, r ControllerClient, gatewayClassName stri
 	if err != nil {
 		return nil, err
 	}
+
+	logger.V(1).Info("fetched policies", "globalGatewayClassConfigs", len(gwccGlobal.Items), "localGatewayClassConfigs", len(gwccLocal.Items), "localGatewayConfigs", len(gwcLocal.Items))
 
 	// Select policies that target GatewayClass, parent resource or namespace of parent resource.
 	// Policies are kept ordered by hierarchy level (least specific first). Within each level,
@@ -272,6 +278,8 @@ func lookupValues(ctx context.Context, r ControllerClient, gatewayClassName stri
 	sortGwc(gwcGwGroup)
 	gwcFiltered = append(gwcFiltered, gwcGwGroup...)
 
+	logger.V(1).Info("filtered policies", "gatewayClassConfigs", len(gwccFiltered), "gatewayConfigs", len(gwcFiltered))
+
 	// Process defaults
 
 	// Blueprint default values are first
@@ -312,6 +320,7 @@ func lookupValues(ctx context.Context, r ControllerClient, gatewayClassName stri
 		return nil, fmt.Errorf("while processing blueprint override values for gatewayclass %s: %w", gatewayClassName, err)
 	}
 
+	logger.Info("values lookup completed", "gatewayClass", gatewayClassName, "namespace", gwNamespace, "name", gwName)
 	return values, nil
 }
 
@@ -327,7 +336,7 @@ func lookupGateway(ctx context.Context, r ControllerClient, name gatewayapi.Obje
 func unstructuredToGVR(r ControllerClient, u *unstructured.Unstructured) (*schema.GroupVersionResource, bool, error) {
 	gv, err := schema.ParseGroupVersion(u.GetAPIVersion())
 	if err != nil {
-		return nil, false, err
+		return nil, false, fmt.Errorf("cannot parse group version '%q' for '%s/%s': %w", u.GetAPIVersion(), u.GetKind(), u.GetName(), err)
 	}
 
 	gk := schema.GroupKind{
@@ -337,13 +346,10 @@ func unstructuredToGVR(r ControllerClient, u *unstructured.Unstructured) (*schem
 
 	mapping, err := r.Client().RESTMapper().RESTMapping(gk, gv.Version)
 	if err != nil {
-		return nil, false, err
+		return nil, false, fmt.Errorf("cannot find REST mapping for '%s/%s' (group='%s', version='%s'): %w", u.GetKind(), u.GetName(), gv.Group, gv.Version, err)
 	}
 
-	isNamespaced := false
-	if mapping.Scope.Name() == meta.RESTScopeNameNamespace {
-		isNamespaced = true
-	}
+	isNamespaced := mapping.Scope.Name() == meta.RESTScopeNameNamespace
 
 	return &schema.GroupVersionResource{
 		Group:    gv.Group,
@@ -355,6 +361,7 @@ func unstructuredToGVR(r ControllerClient, u *unstructured.Unstructured) (*schem
 // Apply an unstructured object using server-side apply
 func patchUnstructured(ctx context.Context, r ControllerDynClient, us *unstructured.Unstructured,
 	gvr *schema.GroupVersionResource, namespace *string) error {
+	logger := log.FromContext(ctx)
 	jsonData, err := json.Marshal(us.Object)
 	if err != nil {
 		return fmt.Errorf("unable to marshal unstructured to json %w", err)
@@ -362,6 +369,7 @@ func patchUnstructured(ctx context.Context, r ControllerDynClient, us *unstructu
 
 	force := true
 
+	logger.V(1).Info("patching resource", "name", us.GetName(), "gvr", gvr, "namespace", namespace)
 	metricPatchApply.Inc()
 	if namespace != nil {
 		dynamicClient := r.DynamicClient().Resource(*gvr).Namespace(*namespace)
