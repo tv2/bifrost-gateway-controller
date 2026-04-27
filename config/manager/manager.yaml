@@ -61,9 +61,7 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       containers:
-      - command:
-        - /ko-app/bifrost-gateway-controller
-        args:
+      - args:
         - --leader-elect
         image: controller:latest
         name: manager
