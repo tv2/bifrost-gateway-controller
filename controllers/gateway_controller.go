@@ -188,7 +188,7 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		templateValues.Resources = buildResourceValues(templates)
 
 		renderedNum, existsNum = renderTemplates(ctx, r, &gw, templates, &templateValues, isFinalAttempt)
-		logger.V(1).Info("rendered templates", "rendered", renderedNum, "exists", existsNum, "attempt", attempt)
+		logger.V(1).Info("rendered resources", "rendered", renderedNum, "exists", existsNum, "attempt", attempt)
 
 		if err = applyTemplates(ctx, r, &gw, templates); err != nil {
 			logger.Error(err, "unable to apply templates", debugContext...)
@@ -196,8 +196,8 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		}
 	}
 
-	requeue = (renderedNum != len(templates))
-	logger.V(1).Info("template loop completed", "renderedNum", renderedNum, "totalNum", len(templates), "requeue", requeue)
+	requeue = (renderedNum != existsNum)
+	logger.V(1).Info("template loop completed", "renderedNum", renderedNum, "existsNum", existsNum, "requeue", requeue)
 
 	beforeStatusUpdate := gw.DeepCopy()
 
@@ -268,13 +268,13 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	progStatus := metav1.ConditionFalse
 	progReason := "Pending"
 	progMsg := ""
-	if existsNum == len(templates) { // 'Programmed' relates to templates alone
+	missing := statusExistingTemplates(templates)
+	if len(missing) == 0 { // 'Programmed' when all templates rendered and all resources exist
 		progStatus = metav1.ConditionTrue
 		progReason = string(gatewayapi.GatewayReasonProgrammed)
 	} else {
-		missing := statusExistingTemplates(templates)
 		sort.Strings(missing)
-		progMsg = fmt.Sprintf("missing %v resources: %s", len(templates)-existsNum, strings.Join(missing, ","))
+		progMsg = fmt.Sprintf("missing %v resources: %s", len(missing), strings.Join(missing, ","))
 	}
 	meta.SetStatusCondition(&gw.Status.Conditions, metav1.Condition{
 		Type:               string(gatewayapi.GatewayConditionProgrammed),
@@ -308,8 +308,8 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	if requeue {
-		if renderedNum != len(templates) {
-			logger.Info("requeuing, not all templates rendered", "renderedNum", renderedNum, "totalNum", len(templates))
+		if renderedNum != existsNum {
+			logger.Info("requeuing, not all resources available", "renderedNum", renderedNum, "existsNum", existsNum)
 		} else {
 			logger.Info("requeuing, status not yet available", "gateway", req.NamespacedName)
 		}

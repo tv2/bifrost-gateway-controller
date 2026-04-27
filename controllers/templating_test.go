@@ -153,7 +153,7 @@ var _ = Describe("renderTemplates", func() {
 		}
 		rendered, exists := renderTemplates(ctx, r, newTestParentGateway(), templates, &TemplateValues{}, false)
 		Expect(rendered).To(Equal(1))
-		Expect(exists).To(Equal(1))
+		Expect(exists).To(Equal(0)) // Resource not yet in cluster (fake client has no objects)
 	})
 
 	It("Should skip already rendered templates", func() {
@@ -197,7 +197,7 @@ var _ = Describe("renderTemplates", func() {
 			{TemplateName: "bad", Template: badTmpl, StringTemplate: "val: {{ .Values.missing }}"},
 		}
 		rendered, exists := renderTemplates(ctx, r, newTestParentGateway(), templates, &TemplateValues{}, false)
-		Expect(rendered).To(Equal(1)) // TODO: seems weird that rendered and exists always equal the same.
+		Expect(rendered).To(Equal(1))
 		Expect(exists).To(Equal(1))
 	})
 })
