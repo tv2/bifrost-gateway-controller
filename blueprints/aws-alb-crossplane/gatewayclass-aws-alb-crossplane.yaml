@@ -7,7 +7,7 @@ kind: GatewayClass
 metadata:
   name: aws-alb-crossplane-public
 spec:
-  controllerName: "github.com/tv2-oss/bifrost-gateway-controller"
+  controllerName: "github.com/tv2/bifrost-gateway-controller"
   description: "Internet-facing AWS ALB and Istio ingress gateway"
   parametersRef:
     group: gateway.tv2.dk
@@ -19,7 +19,7 @@ kind: GatewayClass
 metadata:
   name: aws-alb-crossplane-internal
 spec:
-  controllerName: "github.com/tv2-oss/bifrost-gateway-controller"
+  controllerName: "github.com/tv2/bifrost-gateway-controller"
   description: "Internal AWS ALB and Istio ingress gateway"
   parametersRef:
     group: gateway.tv2.dk
@@ -32,7 +32,7 @@ kind: GatewayClass
 metadata:
   name: aws-alb-crossplane-private
 spec:
-  controllerName: "github.com/tv2-oss/bifrost-gateway-controller"
+  controllerName: "github.com/tv2/bifrost-gateway-controller"
   description: "Private AWS ALB and Istio ingress gateway"
   parametersRef:
     group: gateway.tv2.dk

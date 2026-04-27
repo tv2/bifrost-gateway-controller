@@ -2,22 +2,27 @@
   "$schema": "https://raw.githubusercontent.com/jetify-com/devbox/0.13.6/.schema/devbox.schema.json",
   "packages": [
     "chart-testing@3.11.0",
+    "git@2.47.1",
+    "gettext@0.25.1",
     "gnumake@4.4.1",
-    "go@1.24.4",
-    "golangci-lint@1.64.8",
-    "goreleaser@2.5.0",
+    "go@1.26.1",
+    "golangci-lint@2.11.4",
     "helm-docs@1.14.2",
     "kind@0.24.0",
+    "ko@0.18.0",
     "kubebuilder@4.5.1",
     "kubectl@1.25.3",
     "kubernetes-controller-tools@0.16.4",
     "kubernetes-helm@3.16.3",
     "kustomize@5.5.0",
-    "setup-envtest@0.19.0"
+    "setup-envtest@0.19.0",
   ],
+  "env": {
+    "CGO_ENABLED": "0"
+  },
   "shell": {
     "init_hook": [
-      "echo 'Welcome to Bifrost gateway-controller dev environment'"
+      "echo 'Welcome to Bifrost gateway-controller dev environment'",
     ],
-  }
+  },
 }

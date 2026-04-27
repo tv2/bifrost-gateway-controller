@@ -34,7 +34,7 @@ kind: GatewayClass
 metadata:
   name: example
 spec:
-  controllerName: "github.com/tv2-oss/bifrost-gateway-controller"
+  controllerName: "github.com/tv2/bifrost-gateway-controller"
   parametersRef:
     group: v1alpha1
     kind: GatewayClassBlueprint

@@ -97,45 +97,60 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	var requeue bool
 
 	logger := log.FromContext(ctx)
-	logger.Info("Reconcile")
+	logger.Info("reconcile started", "gateway", req.NamespacedName)
+
+	// Collect debug context for dump-on-error
+	var debugContext []any
 
 	var gw gatewayapi.Gateway
 
 	if err := r.Client().Get(ctx, req.NamespacedName, &gw); err != nil {
+		logger.Info("Gateway not found", "gateway", req.NamespacedName)
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	logger.Info("Gateway")
+	debugContext = append(debugContext, "gatewayClassName", gw.Spec.GatewayClassName, "namespace", gw.Namespace, "listeners", len(gw.Spec.Listeners))
 
 	gwc, err := lookupGatewayClass(ctx, r, gw.Spec.GatewayClassName)
 	if err != nil {
+		logger.Info("GatewayClass not found, requeuing", "gatewayClassName", gw.Spec.GatewayClassName)
 		return ctrl.Result{RequeueAfter: dependencyMissingRequeuePeriod}, client.IgnoreNotFound(err)
 	}
 
 	if !isOurGatewayClass(gwc) {
+		logger.Info("skipping Gateway with non-owned GatewayClass", "gatewayClassName", gwc.Name, "controllerName", gwc.Spec.ControllerName)
 		return ctrl.Result{}, nil
 	}
 
+	debugContext = append(debugContext, "gatewayClass", gwc.Name)
+
 	gwcb, err := lookupGatewayClassBlueprint(ctx, r, gwc)
 	if err != nil {
-		return ctrl.Result{RequeueAfter: dependencyMissingRequeuePeriod}, fmt.Errorf("parameters for GatewayClass %q not found: %w", gwc.ObjectMeta.Name, err)
+		logger.Info("blueprint not found for GatewayClass, requeuing", "gatewayClass", gwc.Name, "parametersRef", gwc.Spec.ParametersRef)
+		return ctrl.Result{RequeueAfter: dependencyMissingRequeuePeriod}, fmt.Errorf("parameters for GatewayClass %q not found: %w", gwc.Name, err)
 	}
+
+	debugContext = append(debugContext, "blueprint", gwcb.Name)
 
 	routes, err := lookupHTTPRoutes(ctx, r)
 	if err != nil {
+		logger.Error(err, "cannot look up HTTPRoutes", debugContext...)
 		return ctrl.Result{}, fmt.Errorf("cannot look up routes: %w", err)
 	}
 	gwRoutes := filterHTTPRoutesForGateway(&gw, routes)
 	union, isect := combineHostnames(&gw, gwRoutes)
+	debugContext = append(debugContext, "attachedRoutes", len(gwRoutes), "hostnameUnion", len(union), "hostnameIntersection", len(isect))
 
 	// Prepare Gateway resource for use in templates by converting to map[string]any
 	gatewayMap, err := objectToMap(&gw)
 	if err != nil {
+		logger.Error(err, "cannot convert gateway to map", "gateway", req.NamespacedName)
 		return ctrl.Result{}, fmt.Errorf("cannot convert gateway to map: %w", err)
 	}
 
-	values, err := lookupValues(ctx, r, gwc.Name, gwcb, gw.ObjectMeta.Namespace, gw.ObjectMeta.Name)
+	values, err := lookupValues(ctx, r, gwc.Name, gwcb, gw.Namespace, gw.Name)
 	if err != nil {
+		logger.Error(err, "cannot lookup values", debugContext...)
 		return ctrl.Result{}, fmt.Errorf("cannot lookup values: %w", err)
 	}
 
@@ -151,8 +166,12 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 	templates, err := parseTemplates(gwcb.Spec.GatewayTemplate.ResourceTemplates)
 	if err != nil {
+		logger.Error(err, "cannot parse templates", debugContext...)
 		return ctrl.Result{}, fmt.Errorf("cannot parse templates: %w", err)
 	}
+
+	debugContext = append(debugContext, "templateCount", len(templates))
+	logger.V(1).Info("reconciliation prepared", debugContext...)
 
 	// At this point we are ready to accept the Gateway resource. If we encounter errors we track then in this variable
 	var errStatus error
@@ -163,21 +182,22 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	// resources.
 	var renderedNum, existsNum int
 	for attempt := 0; attempt < len(templates); attempt++ {
-		logger.Info("reconcile loop", "attempt", attempt)
+		logger.V(1).Info("reconcile loop", "attempt", attempt, "totalTemplates", len(templates))
 		isFinalAttempt := attempt == len(templates)-1
 
 		templateValues.Resources = buildResourceValues(templates)
 
 		renderedNum, existsNum = renderTemplates(ctx, r, &gw, templates, &templateValues, isFinalAttempt)
-		logger.Info("Rendered", "rendered", renderedNum, "exists", existsNum)
+		logger.V(1).Info("rendered templates", "rendered", renderedNum, "exists", existsNum, "attempt", attempt)
 
 		if err = applyTemplates(ctx, r, &gw, templates); err != nil {
+			logger.Error(err, "unable to apply templates", debugContext...)
 			errStatus = fmt.Errorf("unable to apply templates: %w", err)
 		}
 	}
 
 	requeue = (renderedNum != len(templates))
-	logger.Info("ending reconcile loop", "renderedNum", renderedNum, "totalNum", len(templates), "requeue", requeue)
+	logger.V(1).Info("template loop completed", "renderedNum", renderedNum, "totalNum", len(templates), "requeue", requeue)
 
 	beforeStatusUpdate := gw.DeepCopy()
 
@@ -188,10 +208,10 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		statusUpdateOK = false
 		templateValues.Resources = buildResourceValues(templates) // Needed in case of a single-pass render loop above
 		if tmpl, errs := parseSingleTemplate("status", tmplStr); errs != nil {
-			logger.Info("unable to parse status template", "temporary error", errs)
+			logger.Error(errs, "unable to parse status template", "gateway", req.NamespacedName)
 		} else {
-			if statusMap, errs := template2maps(tmpl, &templateValues); errs != nil {
-				logger.Info("unable to render status template", "temporary error", errs, "template", tmplStr, "values", templateValues)
+			if statusMap, errs := template2maps(ctx, tmpl, &templateValues); errs != nil {
+				logger.Info("status template not yet renderable, requeuing", "gateway", req.NamespacedName, "error", errs)
 			} else {
 				gw.Status.Addresses = []gatewayapi.GatewayStatusAddress{}
 				_, found := statusMap[0]["addresses"] // FIXME, more addresses?
@@ -199,7 +219,7 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 					addresses := statusMap[0]["addresses"]
 					if errs := mapstructure.Decode(addresses, &gw.Status.Addresses); errs != nil {
 						// This is probably not a temporary error
-						logger.Error(errs, "unable to decode status data")
+						logger.Error(errs, "unable to decode status data", "gateway", req.NamespacedName)
 					} else {
 						statusUpdateOK = true
 					}
@@ -233,7 +253,7 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			Type:               string(gatewayapi.ListenerConditionAccepted),
 			Status:             metav1.ConditionTrue,
 			Reason:             string(gatewayapi.ListenerReasonAccepted),
-			ObservedGeneration: gw.ObjectMeta.Generation})
+			ObservedGeneration: gw.Generation})
 	}
 
 	// Gateway was accepted as 'ours'
@@ -241,7 +261,7 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		Type:               string(gatewayapi.GatewayConditionAccepted),
 		Status:             metav1.ConditionTrue,
 		Reason:             string(gatewayapi.GatewayReasonAccepted),
-		ObservedGeneration: gw.ObjectMeta.Generation})
+		ObservedGeneration: gw.Generation})
 
 	// Consider Gateway as 'programmed' when all resources have
 	// been templated and applied
@@ -261,36 +281,41 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		Status:             progStatus,
 		Reason:             progReason,
 		Message:            progMsg,
-		ObservedGeneration: gw.ObjectMeta.Generation})
+		ObservedGeneration: gw.Generation})
 
 	// Set `Ready` condition based on child resource statuses, status update and programmed status
 	status := metav1.ConditionFalse
-	isReady, err := statusIsReady(templates)
+	isReady, readyReason, err := statusIsReady(templates)
 	if err != nil {
-		logger.Error(err, "unable to update status condition due to sub-resource status error")
+		logger.Error(err, "unable to update status condition due to sub-resource status error", "gateway", req.NamespacedName)
 		return ctrl.Result{}, err
 	}
+	logger.V(1).Info("gateway readiness", "gateway", req.NamespacedName, "ready", isReady, "reason", readyReason)
 	if isReady && statusUpdateOK && progStatus == metav1.ConditionTrue {
 		status = metav1.ConditionTrue
 	}
 	meta.SetStatusCondition(&gw.Status.Conditions, metav1.Condition{
-		Type:   string(gatewayapi.GatewayConditionReady),
-		Status: status,
-		//nolint:staticcheck // ready status is deprecated in gw-api 0.7.0 but since our implementation fits pre-0.7.0 and intended future use we keep the code
-		Reason:             string(gatewayapi.GatewayReasonReady),
-		ObservedGeneration: gw.ObjectMeta.Generation})
+		Type:               string(gatewayapi.GatewayConditionReady), //nolint:staticcheck // "Ready" is reserved for future use
+		Status:             status,
+		Reason:             string(gatewayapi.GatewayReasonReady), //nolint:staticcheck // "Ready" is reserved for future use
+		ObservedGeneration: gw.Generation})
 
 	if !equality.Semantic.DeepEqual(beforeStatusUpdate.Status, gw.Status) {
 		if err := r.Client().Status().Update(ctx, &gw); err != nil {
-			logger.Error(err, "unable to update Gateway status")
+			logger.Error(err, "unable to update Gateway status", "gateway", req.NamespacedName)
 			return ctrl.Result{}, err
 		}
 	}
 
 	if requeue {
-		logger.Info("requeue - not all resources updated")
+		if renderedNum != len(templates) {
+			logger.Info("requeuing, not all templates rendered", "renderedNum", renderedNum, "totalNum", len(templates))
+		} else {
+			logger.Info("requeuing, status not yet available", "gateway", req.NamespacedName)
+		}
 		return ctrl.Result{RequeueAfter: dependencyMissingRequeuePeriod}, nil
 	}
+	logger.Info("reconcile completed successfully", "gateway", req.NamespacedName)
 	return ctrl.Result{}, errStatus
 }
 
@@ -335,7 +360,14 @@ func combineHostnames(gw *gatewayapi.Gateway, rtList []*gatewayapi.HTTPRoute) (u
 	}
 	for hostname := range hostnames {
 		union = append(union, hostname) // Unique hostnames goes in union
-		if !wildcards.Has(hostname) {   // Unique hostnames goes in intersection if not covered by wildcard
+		covered := false
+		for wildcard := range wildcards {
+			if strings.HasSuffix(hostname, "."+wildcard) || hostname == wildcard {
+				covered = true
+				break
+			}
+		}
+		if !covered {
 			isect = append(isect, hostname)
 		}
 	}
@@ -349,10 +381,10 @@ func filterHTTPRoutesForGateway(gw *gatewayapi.Gateway, rtList []*gatewayapi.HTT
 		for _, pRef := range rt.Spec.ParentRefs {
 			if (pRef.Group != nil && *pRef.Group != gatewayapi.Group(gatewayapi.GroupName)) ||
 				(pRef.Kind != nil && *pRef.Kind != gatewayapi.Kind("Gateway")) ||
-				(pRef.Namespace != nil && *pRef.Namespace != gatewayapi.Namespace(gw.ObjectMeta.Namespace)) ||
+				(pRef.Namespace != nil && *pRef.Namespace != gatewayapi.Namespace(gw.Namespace)) ||
 				// Unspecified namespace means use HTTPRoute namespace
-				(pRef.Namespace == nil && rt.ObjectMeta.Namespace != gw.ObjectMeta.Namespace) ||
-				(pRef.Name != gatewayapi.ObjectName(gw.ObjectMeta.Name)) {
+				(pRef.Namespace == nil && rt.Namespace != gw.Namespace) ||
+				(pRef.Name != gatewayapi.ObjectName(gw.Name)) {
 				// Skip as ParentRef does not refer to Gateway
 				continue
 			}

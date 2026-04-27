@@ -38,7 +38,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	gcapi "github.com/tv2-oss/bifrost-gateway-controller/apis/gateway.tv2.dk/v1alpha1"
+	gcapi "github.com/tv2/bifrost-gateway-controller/apis/gateway.tv2.dk/v1alpha1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -87,7 +87,7 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred())
 	Expect(cfg).NotTo(BeNil())
 
-	err = gatewayapi.AddToScheme(scheme.Scheme)
+	err = gatewayapi.Install(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
 
 	err = gcapi.AddToScheme(scheme.Scheme)
@@ -105,7 +105,7 @@ var _ = BeforeSuite(func() {
 	}
 	httpClient, err := rest.HTTPClientFor(cfg)
 	Expect(err).ToNot(HaveOccurred())
-	restClient, err = apiutil.RESTClientForGVK(gvk, false, cfg, serializer.NewCodecFactory(scheme.Scheme), httpClient)
+	restClient, err = apiutil.RESTClientForGVK(gvk, false, false, cfg, serializer.NewCodecFactory(scheme.Scheme), httpClient)
 	Expect(err).NotTo(HaveOccurred())
 })
 

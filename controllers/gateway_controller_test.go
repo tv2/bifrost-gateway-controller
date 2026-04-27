@@ -34,163 +34,451 @@ package controllers
 import (
 	"context"
 	"regexp"
+	"sort"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	gwcapi "github.com/tv2-oss/bifrost-gateway-controller/apis/gateway.tv2.dk/v1alpha1"
+	gwcapi "github.com/tv2/bifrost-gateway-controller/apis/gateway.tv2.dk/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/yaml"
 	gatewayapi "sigs.k8s.io/gateway-api/apis/v1"
 
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/gateway-api/conformance/utils/kubernetes"
 )
 
-const gatewayClassManifest string = `
-apiVersion: gateway.networking.k8s.io/v1beta1
-kind: GatewayClass
-metadata:
-  name: default
-spec:
-  controllerName: "github.com/tv2-oss/bifrost-gateway-controller"
-  parametersRef:
-    group: gateway.tv2.dk
-    kind: GatewayClassBlueprint
-    name: default-gateway-class`
+// ------------------------------------
+// Test Helpers
+// ------------------------------------
 
-const gatewayManifest string = `
-apiVersion: gateway.networking.k8s.io/v1beta1
+// conditionStateIs is a helper function to check if a Gateway has a condition of a given type, status, reason and message pattern
+func conditionStateIs(gw *gatewayapi.Gateway, condType string, status *metav1.ConditionStatus, reason, messageRegEx *string) bool {
+	var msgMatch *regexp.Regexp
+	if messageRegEx != nil {
+		msgMatch, _ = regexp.Compile(*messageRegEx)
+	}
+	for _, cond := range gw.Status.Conditions {
+		if cond.Type == condType &&
+			(status == nil || cond.Status == *status) &&
+			(reason == nil || cond.Reason == *reason) &&
+			(messageRegEx == nil || msgMatch.MatchString(cond.Message)) {
+			return true
+		}
+	}
+	return false
+}
+
+// setGatewayStatus is a helper function to update the status of a Gateway in the test environment
+func setGatewayStatus(nn types.NamespacedName, newCondition *metav1.Condition, address *gatewayapi.GatewayStatusAddress) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		gw := &gatewayapi.Gateway{}
+
+		if err := k8sClient.Get(context.TODO(), nn, gw); err != nil {
+			return err
+		}
+
+		if newCondition != nil {
+			newCondition.ObservedGeneration = gw.ObjectMeta.Generation
+			meta.SetStatusCondition(&gw.Status.Conditions, *newCondition)
+			GinkgoT().Logf("update gw: %+v conditions: %+v\n", gw, newCondition)
+		}
+		if address != nil {
+			gw.Status.Addresses = []gatewayapi.GatewayStatusAddress{}
+			gw.Status.Addresses = append(gw.Status.Addresses, *address)
+		}
+
+		return k8sClient.Status().Update(context.TODO(), gw)
+	})
+}
+
+// Shared resource template used by both ready and non-ready blueprints
+const tmplConfigMapSource = `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: source-configmap
+  namespace: {{ .Gateway.metadata.namespace }}
+data:
+  valueToRead1: Hello
+  valueToRead2: World
+`
+
+// newTestGatewayClass returns a GatewayClass with a reference to the default test GatewayClassBlueprint
+func newTestGatewayClass() *gatewayapi.GatewayClass {
+	return &gatewayapi.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "default"},
+		Spec: gatewayapi.GatewayClassSpec{
+			ControllerName: "github.com/tv2/bifrost-gateway-controller",
+			ParametersRef: &gatewayapi.ParametersReference{
+				Group: "gateway.tv2.dk",
+				Kind:  "GatewayClassBlueprint",
+				Name:  "default-gateway-class",
+			},
+		},
+	}
+}
+
+// newTestGateway returns a Gateway with a reference to the default test GatewayClass
+func newTestGateway() *gatewayapi.Gateway {
+	hostname := gatewayapi.Hostname("example.com")
+	return &gatewayapi.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "foo-gateway", Namespace: "default"},
+		Spec: gatewayapi.GatewaySpec{
+			GatewayClassName: "default",
+			Listeners: []gatewayapi.Listener{{
+				Name:     "prod-web",
+				Port:     80,
+				Protocol: gatewayapi.HTTPProtocolType,
+				Hostname: &hostname,
+			}},
+		},
+	}
+}
+
+// newTestBlueprint returns a GatewayClassBlueprint with templates that
+// reference each other to test inter-resource referencing and value inheritance
+func newTestBlueprint() *gwcapi.GatewayClassBlueprint {
+	return &gwcapi.GatewayClassBlueprint{
+		ObjectMeta: metav1.ObjectMeta{Name: "default-gateway-class"},
+		Spec: gwcapi.GatewayClassBlueprintSpec{
+			Values: gwcapi.TemplateValues{
+				Default: jsonRaw(`{"configmap2SuffixData":["one","two","three"]}`),
+			},
+			GatewayTemplate: gwcapi.ResourceSpec{
+				ResourceStatusSpec: gwcapi.ResourceStatusSpec{
+					Status: map[string]string{
+						"template": "addresses:\n  {{ toYaml (index .Resources.childGateway 0).status.addresses | nindent 2}}\n",
+					},
+				},
+				ResourceTemplate: gwcapi.ResourceTemplate{
+					ResourceTemplates: map[string]string{
+						"childGateway": `apiVersion: gateway.networking.k8s.io/v1beta1
 kind: Gateway
 metadata:
-  name: foo-gateway
-  namespace: default
+  name: {{ .Gateway.metadata.name }}-istio
+  namespace: {{ .Gateway.metadata.namespace }}
+  annotations:
+    networking.istio.io/service-type: ClusterIP
 spec:
-  gatewayClassName: default
+  gatewayClassName: istio
   listeners:
-  - name: prod-web
-    port: 80
-    protocol: HTTP
-    hostname: example.com
-`
-
-const gatewayClassBlueprintManifest string = `
-apiVersion: gateway.tv2.dk/v1alpha1
-kind: GatewayClassBlueprint
+    {{- toYaml .Gateway.spec.listeners | nindent 6 }}
+`,
+						"configMapTestSource": tmplConfigMapSource,
+						"configMapTestIntermediate1": `apiVersion: v1
+kind: ConfigMap
 metadata:
-  name: default-gateway-class
-spec:
-  values:
-    default:
-      configmap2SuffixData:
-      - one
-      - two
-      - three
-  gatewayTemplate:
-    status:
-      template: |
-        addresses:
-          {{ toYaml (index .Resources.childGateway 0).status.addresses | nindent 2}}
-    resourceTemplates:
-      childGateway: |
-        apiVersion: gateway.networking.k8s.io/v1beta1
-        kind: Gateway
-        metadata:
-          name: {{ .Gateway.metadata.name }}-istio
-          namespace: {{ .Gateway.metadata.namespace }}
-          annotations:
-            networking.istio.io/service-type: ClusterIP
-        spec:
-          gatewayClassName: istio
-          listeners:
-            {{- toYaml .Gateway.spec.listeners | nindent 6 }}
-      # The following three configmaps tests referencing between resources
-      configMapTestSource: |
-        apiVersion: v1
-        kind: ConfigMap
-        metadata:
-          name: source-configmap
-          namespace: {{ .Gateway.metadata.namespace }}
-        data:
-          valueToRead1: Hello
-          valueToRead2: World
-      configMapTestIntermediate1: |
-        apiVersion: v1
-        kind: ConfigMap
-        metadata:
-          name: intermediate1-configmap
-          namespace: {{ .Gateway.metadata.namespace }}
-        data:
-          valueIntermediate: {{ (index .Resources.configMapTestSource 0).data.valueToRead1 }}
-      configMapTestIntermediate2: |
-        {{ range $idx,$suffix := .Values.configmap2SuffixData }}
-        apiVersion: v1
-        kind: ConfigMap
-        metadata:
-          name: intermediate2-configmap-{{ $idx }}
-          namespace: {{ $.Gateway.metadata.namespace }}
-        data:
-          valueIntermediate: {{ (index $.Resources.configMapTestSource 0).data.valueToRead1 }}-{{ $suffix }}
-        ---
-        {{ end }}
-      # Use references to multiple resources coupled with template pipeline and functions
-      configMapTestDestination: |
-        apiVersion: v1
-        kind: ConfigMap
-        metadata:
-          name: dst-configmap
-          namespace: {{ .Gateway.metadata.namespace }}
-        data:
-          valueRead: {{ printf "%s, %s" (index .Resources.configMapTestIntermediate1 0).data.valueIntermediate (index .Resources.configMapTestSource 0).data.valueToRead2 | upper }}
-          valueRead2: {{ printf "Testing, one two %s" (index .Resources.configMapTestIntermediate2 2).data.valueIntermediate | upper }}
-  httpRouteTemplate:
-    resourceTemplates:
-      shadowHttproute: |
-        apiVersion: gateway.networking.k8s.io/v1beta1
-        kind: HTTPRoute
-        metadata:
-          name: {{ .HTTPRoute.metadata.name }}-istio
-          namespace: {{ .HTTPRoute.metadata.namespace }}
-        spec:
-          parentRefs:
-          {{ range .HTTPRoute.spec.parentRefs }}
-          - kind: {{ .kind }}
-            name: {{ .name }}-istio
-            namespace: {{ .namespace }}
-          {{ end }}
-          rules:
-          {{ toYaml .HTTPRoute.spec.rules | nindent 4 }}`
-
-// Blueprint that creates resources that never become ready
-const gatewayClassBlueprintManifestNonReady string = `
-apiVersion: gateway.tv2.dk/v1alpha1
-kind: GatewayClassBlueprint
+  name: intermediate1-configmap
+  namespace: {{ .Gateway.metadata.namespace }}
+data:
+  valueIntermediate: {{ (index .Resources.configMapTestSource 0).data.valueToRead1 }}
+`,
+						"configMapTestIntermediate2": `{{ range $idx,$suffix := .Values.configmap2SuffixData }}
+apiVersion: v1
+kind: ConfigMap
 metadata:
-  name: default-gateway-class
+  name: intermediate2-configmap-{{ $idx }}
+  namespace: {{ $.Gateway.metadata.namespace }}
+data:
+  valueIntermediate: {{ (index $.Resources.configMapTestSource 0).data.valueToRead1 }}-{{ $suffix }}
+---
+{{ end }}
+`,
+						"configMapTestDestination": `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dst-configmap
+  namespace: {{ .Gateway.metadata.namespace }}
+data:
+  valueRead: {{ printf "%s, %s" (index .Resources.configMapTestIntermediate1 0).data.valueIntermediate (index .Resources.configMapTestSource 0).data.valueToRead2 | upper }}
+  valueRead2: {{ printf "Testing, one two %s" (index .Resources.configMapTestIntermediate2 2).data.valueIntermediate | upper }}
+`,
+					},
+				},
+			},
+			HTTPRouteTemplate: gwcapi.ResourceSpec{
+				ResourceTemplate: gwcapi.ResourceTemplate{
+					ResourceTemplates: map[string]string{
+						"shadowHttproute": `apiVersion: gateway.networking.k8s.io/v1beta1
+kind: HTTPRoute
+metadata:
+  name: {{ .HTTPRoute.metadata.name }}-istio
+  namespace: {{ .HTTPRoute.metadata.namespace }}
 spec:
-  values: null
-  gatewayTemplate:
-    resourceTemplates:
-      configMapTestSource: |
-        apiVersion: v1
-        kind: ConfigMap
-        metadata:
-          name: source-configmap
-          namespace: {{ .Gateway.metadata.namespace }}
-        data:
-          valueToRead1: Hello
-          valueToRead2: World
-      configMapTestIntermediate1: |
-        apiVersion: v1
-        kind: ConfigMap
-        metadata:
-          name: intermediate1-configmap
-          namespace: {{ .Gateway.metadata.namespace }}
-        data:
-          valueIntermediate: {{ (index .Resources.configMapTestSource 0).data.valueToRead1NonExisting }}
-`
+  parentRefs:
+  {{ range .HTTPRoute.spec.parentRefs }}
+  - kind: {{ .kind }}
+    name: {{ .name }}-istio
+    namespace: {{ .namespace }}
+  {{ end }}
+  rules:
+  {{ toYaml .HTTPRoute.spec.rules | nindent 4 }}
+`,
+					},
+				},
+			},
+		},
+	}
+}
+
+// newTestBlueprintNonReady returns a GatewayClassBlueprint with templates that
+// reference each other but have a missing value reference to simulate a
+// non-ready child resource
+func newTestBlueprintNonReady() *gwcapi.GatewayClassBlueprint {
+	return &gwcapi.GatewayClassBlueprint{
+		ObjectMeta: metav1.ObjectMeta{Name: "default-gateway-class"},
+		Spec: gwcapi.GatewayClassBlueprintSpec{
+			GatewayTemplate: gwcapi.ResourceSpec{
+				ResourceTemplate: gwcapi.ResourceTemplate{
+					ResourceTemplates: map[string]string{
+						"configMapTestSource": tmplConfigMapSource,
+						"configMapTestIntermediate1": `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: intermediate1-configmap
+  namespace: {{ .Gateway.metadata.namespace }}
+data:
+  valueIntermediate: {{ (index .Resources.configMapTestSource 0).data.valueToRead1NonExisting }}
+`,
+					},
+				},
+			},
+		},
+	}
+}
+
+// ------------------------------------
+// [combineHostnames] tests
+// ------------------------------------
+
+var _ = Describe("combineHostnames", func() {
+	// gwWith is a helper to create a Gateway with listeners having the given hostnames
+	gwWith := func(hostnames ...string) *gatewayapi.Gateway {
+		gw := &gatewayapi.Gateway{}
+		for _, h := range hostnames {
+			hn := gatewayapi.Hostname(h)
+			gw.Spec.Listeners = append(gw.Spec.Listeners, gatewayapi.Listener{
+				Name:     gatewayapi.SectionName("l"),
+				Hostname: &hn,
+			})
+		}
+		return gw
+	}
+
+	// rtWith is a helper to create an HTTPRoute with the given hostnames
+	rtWith := func(ns string, hostnames ...string) *gatewayapi.HTTPRoute { //nolint:unparam // ns is always "default" in tests but kept for clarity
+		rt := &gatewayapi.HTTPRoute{}
+		rt.Namespace = ns
+		for _, h := range hostnames {
+			rt.Spec.Hostnames = append(rt.Spec.Hostnames, gatewayapi.Hostname(h))
+		}
+		return rt
+	}
+
+	It("Should return empty slices (nil) when no hostnames", func() {
+		gw := &gatewayapi.Gateway{
+			Spec: gatewayapi.GatewaySpec{
+				Listeners: []gatewayapi.Listener{{Name: "l"}},
+			},
+		}
+		union, isect := combineHostnames(gw, nil)
+		Expect(union).To(BeNil())
+		Expect(isect).To(BeNil())
+	})
+
+	It("Should return a single hostname in both union and intersection", func() {
+		gw := gwWith("example.com")
+		union, isect := combineHostnames(gw, nil)
+		Expect(union).To(ConsistOf("example.com"))
+		Expect(isect).To(ConsistOf("example.com"))
+	})
+
+	It("Should deduplicate identical hostnames from listener and route", func() {
+		gw := gwWith("example.com")
+		rt := rtWith("default", "example.com")
+		union, isect := combineHostnames(gw, []*gatewayapi.HTTPRoute{rt})
+		Expect(union).To(ConsistOf("example.com"))
+		Expect(isect).To(ConsistOf("example.com"))
+	})
+
+	It("Should exclude route hostname from intersection when covered by wildcard", func() {
+		gw := gwWith("*.example.com")
+		rt := rtWith("default", "foo.example.com")
+		union, isect := combineHostnames(gw, []*gatewayapi.HTTPRoute{rt})
+		sort.Strings(union)
+		Expect(union).To(ConsistOf("*.example.com", "foo.example.com"))
+		Expect(isect).To(ConsistOf("*.example.com"))
+	})
+
+	It("Should keep non-covered hostname in intersection", func() {
+		gw := gwWith("*.example.com")
+		rt := rtWith("default", "other.org")
+		union, isect := combineHostnames(gw, []*gatewayapi.HTTPRoute{rt})
+		Expect(union).To(ConsistOf("*.example.com", "other.org"))
+		Expect(isect).To(ConsistOf("*.example.com", "other.org"))
+	})
+
+	It("Should handle multiple wildcards and mixed hostnames", func() {
+		gw := gwWith("*.example.com", "*.test.io")
+		rt := rtWith("default", "foo.example.com", "bar.test.io", "other.org")
+		union, isect := combineHostnames(gw, []*gatewayapi.HTTPRoute{rt})
+		Expect(union).To(ConsistOf("*.example.com", "*.test.io", "foo.example.com", "bar.test.io", "other.org"))
+		Expect(isect).To(ConsistOf("*.example.com", "*.test.io", "other.org"))
+	})
+
+	It("Should include route hostnames from multiple routes", func() {
+		gw := gwWith("example.com")
+		rt1 := rtWith("default", "a.example.com")
+		rt2 := rtWith("default", "b.example.com")
+		union, isect := combineHostnames(gw, []*gatewayapi.HTTPRoute{rt1, rt2})
+		Expect(union).To(ConsistOf("example.com", "a.example.com", "b.example.com"))
+		Expect(isect).To(ConsistOf("example.com", "a.example.com", "b.example.com"))
+	})
+
+	It("Should handle listeners without hostname", func() {
+		gw := &gatewayapi.Gateway{
+			Spec: gatewayapi.GatewaySpec{
+				Listeners: []gatewayapi.Listener{{Name: "l"}},
+			},
+		}
+		rt := rtWith("default", "example.com")
+		union, isect := combineHostnames(gw, []*gatewayapi.HTTPRoute{rt})
+		Expect(union).To(ConsistOf("example.com"))
+		Expect(isect).To(ConsistOf("example.com"))
+	})
+})
+
+// ------------------------------------
+// [filterHTTPRoutesForGateway] tests
+// ------------------------------------
+
+var _ = Describe("filterHTTPRoutesForGateway", func() {
+	// rtWithRef is a helper to create an HTTPRoute with a parent ref to a gateway with the given name and namespace
+	rtWithRef := func(name, ns string, parentName gatewayapi.ObjectName, parentNs *gatewayapi.Namespace, parentGroup *gatewayapi.Group, parentKind *gatewayapi.Kind) *gatewayapi.HTTPRoute {
+		return &gatewayapi.HTTPRoute{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+			Spec: gatewayapi.HTTPRouteSpec{
+				CommonRouteSpec: gatewayapi.CommonRouteSpec{
+					ParentRefs: []gatewayapi.ParentReference{{
+						Group:     parentGroup,
+						Kind:      parentKind,
+						Name:      parentName,
+						Namespace: parentNs,
+					}},
+				},
+			},
+		}
+	}
+
+	gw := &gatewayapi.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-gw", Namespace: "default"},
+	}
+
+	It("Should match route with matching name and same namespace", func() {
+		rt := rtWithRef("rt1", "default", "my-gw", nil, nil, nil)
+		result := filterHTTPRoutesForGateway(gw, []*gatewayapi.HTTPRoute{rt})
+		Expect(result[0].Name).To(Equal("rt1"))
+	})
+
+	It("Should match route with explicit matching namespace", func() {
+		ns := gatewayapi.Namespace("default")
+		rt := rtWithRef("rt1", "default", "my-gw", &ns, nil, nil)
+		result := filterHTTPRoutesForGateway(gw, []*gatewayapi.HTTPRoute{rt})
+		Expect(result).To(HaveLen(1))
+	})
+
+	It("Should not match route targeting different gateway name", func() {
+		rt := rtWithRef("rt1", "default", "other-gw", nil, nil, nil)
+		result := filterHTTPRoutesForGateway(gw, []*gatewayapi.HTTPRoute{rt})
+		Expect(result).To(BeEmpty())
+	})
+
+	It("Should not match route in different namespace (implicit)", func() {
+		rt := rtWithRef("rt1", "other-ns", "my-gw", nil, nil, nil)
+		result := filterHTTPRoutesForGateway(gw, []*gatewayapi.HTTPRoute{rt})
+		Expect(result).To(BeEmpty())
+	})
+
+	It("Should not match route with explicit wrong namespace", func() {
+		ns := gatewayapi.Namespace("other-ns")
+		rt := rtWithRef("rt1", "default", "my-gw", &ns, nil, nil)
+		result := filterHTTPRoutesForGateway(gw, []*gatewayapi.HTTPRoute{rt})
+		Expect(result).To(BeEmpty())
+	})
+
+	It("Should match correct group and reject wrong group", func() {
+		wrongGroup := gatewayapi.Group("wrong.group")
+		rt := rtWithRef("rt1", "default", "my-gw", nil, &wrongGroup, nil)
+		Expect(filterHTTPRoutesForGateway(gw, []*gatewayapi.HTTPRoute{rt})).To(BeEmpty())
+
+		correctGroup := gatewayapi.Group(gatewayapi.GroupName)
+		rt2 := rtWithRef("rt2", "default", "my-gw", nil, &correctGroup, nil)
+		Expect(filterHTTPRoutesForGateway(gw, []*gatewayapi.HTTPRoute{rt2})).To(HaveLen(1))
+	})
+
+	It("Should match correct kind and reject wrong kind", func() {
+		wrongKind := gatewayapi.Kind("Service")
+		rt := rtWithRef("rt1", "default", "my-gw", nil, nil, &wrongKind)
+		Expect(filterHTTPRoutesForGateway(gw, []*gatewayapi.HTTPRoute{rt})).To(BeEmpty())
+
+		correctKind := gatewayapi.Kind("Gateway")
+		rt2 := rtWithRef("rt2", "default", "my-gw", nil, nil, &correctKind)
+		Expect(filterHTTPRoutesForGateway(gw, []*gatewayapi.HTTPRoute{rt2})).To(HaveLen(1))
+	})
+
+	It("Should filter from multiple routes keeping only matches", func() {
+		rt1 := rtWithRef("match1", "default", "my-gw", nil, nil, nil)
+		rt2 := rtWithRef("nomatch", "default", "other-gw", nil, nil, nil)
+		rt3 := rtWithRef("match2", "default", "my-gw", nil, nil, nil)
+		result := filterHTTPRoutesForGateway(gw, []*gatewayapi.HTTPRoute{rt1, rt2, rt3})
+		Expect(result).To(HaveLen(2))
+		Expect(result[0].Name).To(Equal("match1"))
+		Expect(result[1].Name).To(Equal("match2"))
+	})
+
+	It("Should return empty slice for empty input", func() {
+		result := filterHTTPRoutesForGateway(gw, nil)
+		Expect(result).To(BeEmpty())
+	})
+
+	It("Should handle route with no parent refs", func() {
+		rt := &gatewayapi.HTTPRoute{
+			ObjectMeta: metav1.ObjectMeta{Name: "rt1", Namespace: "default"},
+		}
+		result := filterHTTPRoutesForGateway(gw, []*gatewayapi.HTTPRoute{rt})
+		Expect(result).To(BeEmpty())
+	})
+})
+
+// ------------------------------------
+// [lookupHTTPRoutes] tests
+// ------------------------------------
+
+var _ = Describe("lookupHTTPRoutes", func() {
+
+	It("Should return empty slice when no routes exist", func() {
+		r := newFakeClient()
+		routes, err := lookupHTTPRoutes(context.Background(), r)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(routes).To(BeEmpty())
+	})
+
+	It("Should return all routes from the cluster", func() {
+		rt1 := &gatewayapi.HTTPRoute{ObjectMeta: metav1.ObjectMeta{Name: "rt1", Namespace: "default"}}
+		rt2 := &gatewayapi.HTTPRoute{ObjectMeta: metav1.ObjectMeta{Name: "rt2", Namespace: "other"}}
+		r := newFakeClient(rt1, rt2)
+		routes, err := lookupHTTPRoutes(context.Background(), r)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(routes[0].Name).To(Equal("rt1"))
+		Expect(routes[1].Name).To(Equal("rt2"))
+	})
+})
+
+// ------------------------------------
+// Integration tests
+// ------------------------------------
 
 var _ = Describe("Gateway controller", func() {
 
@@ -206,48 +494,55 @@ var _ = Describe("Gateway controller", func() {
 	)
 
 	BeforeEach(func() {
-		gwc = &gatewayapi.GatewayClass{}
-		gwcb = &gwcapi.GatewayClassBlueprint{}
+		// Before each test, create a shared default GatewayClass and a shared
+		// GatewayClassBlueprint that the test Gateways will reference.
 		ctx = context.Background()
-		Expect(yaml.Unmarshal([]byte(gatewayClassManifest), gwc)).To(Succeed())
+		gwc = newTestGatewayClass()
 		Expect(k8sClient.Create(ctx, gwc)).Should(Succeed())
-		Expect(yaml.Unmarshal([]byte(gatewayClassBlueprintManifest), gwcb)).To(Succeed())
+		gwcb = newTestBlueprint()
 		Expect(k8sClient.Create(ctx, gwcb)).Should(Succeed())
 	})
 
 	AfterEach(func() {
+		// After each test, clean up the created GatewayClass and
+		// GatewayClassBlueprint to avoid interference with other tests.
 		Expect(k8sClient.Delete(ctx, gwc)).Should(Succeed())
 		Expect(k8sClient.Delete(ctx, gwcb)).Should(Succeed())
 	})
 
 	When("Reconciling a parent Gateway", func() {
-		var childGateway, gw *gatewayapi.Gateway
+		var gw *gatewayapi.Gateway
 
 		BeforeEach(func() {
-			gw = &gatewayapi.Gateway{}
-			childGateway = &gatewayapi.Gateway{}
-			Expect(yaml.Unmarshal([]byte(gatewayManifest), gw)).To(Succeed())
+			// Create a Gateway that will be used in the "Reconciling a parent
+			// Gateway" tests. This Gateway references the shared default
+			// GatewayClass and should trigger the creation of a child Gateway
+			// and the ConfigMaps defined in the blueprint.
+			gw = newTestGateway()
+			Expect(k8sClient.Create(ctx, gw)).Should(Succeed()) // create the parent Gateway
+			DeferCleanup(func() {
+				Expect(k8sClient.Delete(ctx, gw)).Should(Succeed()) // when test finishes, delete the parent Gateway and expect the child and configmaps to be garbage collected
+			})
 		})
 
-		It("Should lifecycle correctly", func() {
-
-			By("Creating the gateway")
-			Expect(k8sClient.Create(ctx, gw)).Should(Succeed())
-			Expect(string(gw.Spec.GatewayClassName)).To(Equal("default"))
-
-			gwNN := types.NamespacedName{Name: gw.ObjectMeta.Name, Namespace: gw.ObjectMeta.Namespace}
+		It("Should set owner reference on child gateway for garbage collection", func() {
+			childGateway := &gatewayapi.Gateway{}
 			gwChildNN := types.NamespacedName{Name: gw.ObjectMeta.Name + "-istio", Namespace: gw.ObjectMeta.Namespace}
 
-			By("Creating the child gateway")
+			// Wait for child gateway to exist and have the correct owner
+			// reference pointing to the parent gateway for garbage collection
 			Eventually(func() bool {
-				err := k8sClient.Get(ctx, gwChildNN, childGateway)
-				return err == nil
+				if err := k8sClient.Get(ctx, gwChildNN, childGateway); err != nil {
+					return false
+				}
+				for _, ref := range childGateway.ObjectMeta.OwnerReferences {
+					if ref.UID == gw.ObjectMeta.GetUID() {
+						return true
+					}
+				}
+				return false
 			}, timeout, interval).Should(BeTrue())
-			DeferCleanup(func() {
-				Expect(k8sClient.Delete(ctx, gw)).Should(Succeed())
-			})
 
-			By("Setting the owner reference to enable garbage collection")
 			t := true
 			expectedOwnerReference := metav1.OwnerReference{
 				Kind:               "Gateway",
@@ -258,16 +553,23 @@ var _ = Describe("Gateway controller", func() {
 				BlockOwnerDeletion: &t,
 			}
 			Expect(childGateway.ObjectMeta.OwnerReferences).To(ContainElement(expectedOwnerReference))
+		})
 
-			By("Updating conditions")
+		It("Should set Ready=false when child gateway is not ready", func() {
+			gwNN := types.NamespacedName{Name: gw.ObjectMeta.Name, Namespace: gw.ObjectMeta.Namespace}
+			gwChildNN := types.NamespacedName{Name: gw.ObjectMeta.Name + "-istio", Namespace: gw.ObjectMeta.Namespace}
 
-			// Set child status to not ready
+			// Wait for child to exist
+			Eventually(func() bool {
+				return k8sClient.Get(ctx, gwChildNN, &gatewayapi.Gateway{}) == nil
+			}, timeout, interval).Should(BeTrue())
+
 			Expect(setGatewayStatus(gwChildNN, &metav1.Condition{
 				Type:   string(gatewayapi.GatewayConditionReady),
 				Status: metav1.ConditionFalse,
-				//nolint:staticcheck // ready status is deprecated in gw-api 0.7.0 but since our implementation fits pre-0.7.0 and intended future use we keep the code
+				//nolint:staticcheck // GatewayReasonReady is deprecated but still used by the upstream API
 				Reason: string(gatewayapi.GatewayReasonReady)}, nil)).Should(Succeed())
-			time.Sleep(5 * time.Second) // Ensure that controllers cache is updated and we can use 'Consistently' below
+			time.Sleep(5 * time.Second)
 
 			gwRead := &gatewayapi.Gateway{}
 			Consistently(func() bool {
@@ -275,106 +577,30 @@ var _ = Describe("Gateway controller", func() {
 				if err != nil {
 					return false
 				}
-				GinkgoT().Logf("gwRead cond: %+v\n", gwRead.Status.Conditions)
 				if kubernetes.ConditionsHaveLatestObservedGeneration(gwRead, gwRead.Status.Conditions) != nil {
 					return false
 				}
-				if !conditionStateIs(gwRead, "Ready", PtrTo(metav1.ConditionFalse), nil, nil) ||
-					!conditionStateIs(gwRead, "Programmed", PtrTo(metav1.ConditionTrue), nil, nil) {
-					return false
-				}
-				return true
+				return conditionStateIs(gwRead, "Ready", PtrTo(metav1.ConditionFalse), nil, nil) &&
+					conditionStateIs(gwRead, "Programmed", PtrTo(metav1.ConditionTrue), nil, nil)
 			}, 5*time.Second, interval).Should(BeTrue())
+		})
 
-			// Set child status to ready
+		It("Should set Ready=true and propagate address when child gateway is ready", func() {
+			gwNN := types.NamespacedName{Name: gw.ObjectMeta.Name, Namespace: gw.ObjectMeta.Namespace}
+			gwChildNN := types.NamespacedName{Name: gw.ObjectMeta.Name + "-istio", Namespace: gw.ObjectMeta.Namespace}
+
+			// Wait for child to exist
+			Eventually(func() bool {
+				return k8sClient.Get(ctx, gwChildNN, &gatewayapi.Gateway{}) == nil
+			}, timeout, interval).Should(BeTrue())
+
 			addrType := gatewayapi.IPAddressType
 			Expect(setGatewayStatus(gwChildNN, &metav1.Condition{
 				Type:   string(gatewayapi.GatewayConditionReady),
 				Status: metav1.ConditionTrue,
-				//nolint:staticcheck // ready status is deprecated in gw-api 0.7.0 but since our implementation fits pre-0.7.0 and intended future use we keep the code
+				//nolint:staticcheck // GatewayReasonReady is deprecated but still used by the upstream API
 				Reason: string(gatewayapi.GatewayReasonReady)},
 				&gatewayapi.GatewayStatusAddress{Type: &addrType, Value: "4.5.6.7"})).Should(Succeed())
-
-			Eventually(func() bool {
-				err := k8sClient.Get(ctx, gwNN, gwRead)
-				if err != nil {
-					return false
-				}
-				GinkgoT().Logf("gwRead cond: %+v\n", gwRead.Status.Conditions)
-				if kubernetes.ConditionsHaveLatestObservedGeneration(gwRead, gwRead.Status.Conditions) != nil {
-					return false
-				}
-				if !conditionStateIs(gwRead, "Ready", PtrTo(metav1.ConditionTrue), nil, nil) ||
-					!conditionStateIs(gwRead, "Programmed", PtrTo(metav1.ConditionTrue), nil, nil) {
-					return false
-				}
-				return true
-			}, timeout, interval).Should(BeTrue())
-
-		})
-
-		It("Should update inter resource-references", func() {
-
-			cm := corev1.ConfigMap{}
-			Eventually(func() bool {
-				err := k8sClient.Get(ctx, types.NamespacedName{Name: "dst-configmap", Namespace: "default"}, &cm)
-				return err == nil
-			}, timeout, interval).Should(BeTrue())
-
-			By("Setting the content of the destination configmap")
-			Expect(cm.Data["valueRead"]).To(Equal("HELLO, WORLD"))
-			Expect(cm.Data["valueRead2"]).To(Equal("TESTING, ONE TWO HELLO-THREE"))
-		})
-	})
-})
-
-var _ = Describe("Gateway controller non-ready resources", func() {
-
-	const (
-		timeout  = time.Second * 10
-		interval = time.Millisecond * 250
-	)
-
-	var (
-		gwc  *gatewayapi.GatewayClass
-		gwcb *gwcapi.GatewayClassBlueprint
-		ctx  context.Context
-	)
-
-	BeforeEach(func() {
-		gwc = &gatewayapi.GatewayClass{}
-		gwcb = &gwcapi.GatewayClassBlueprint{}
-		ctx = context.Background()
-		Expect(yaml.Unmarshal([]byte(gatewayClassManifest), gwc)).To(Succeed())
-		Expect(k8sClient.Create(ctx, gwc)).Should(Succeed())
-		Expect(yaml.Unmarshal([]byte(gatewayClassBlueprintManifestNonReady), gwcb)).To(Succeed())
-		Expect(k8sClient.Create(ctx, gwcb)).Should(Succeed())
-	})
-
-	AfterEach(func() {
-		Expect(k8sClient.Delete(ctx, gwc)).Should(Succeed())
-		Expect(k8sClient.Delete(ctx, gwcb)).Should(Succeed())
-	})
-
-	When("Reconciling a parent Gateway", func() {
-		var gw *gatewayapi.Gateway
-
-		BeforeEach(func() {
-			gw = &gatewayapi.Gateway{}
-			Expect(yaml.Unmarshal([]byte(gatewayManifest), gw)).To(Succeed())
-		})
-
-		It("Should lifecycle correctly", func() {
-
-			By("Creating the gateway")
-			Expect(k8sClient.Create(ctx, gw)).Should(Succeed())
-			DeferCleanup(func() {
-				Expect(k8sClient.Delete(ctx, gw)).Should(Succeed())
-			})
-
-			gwNN := types.NamespacedName{Name: gw.ObjectMeta.Name, Namespace: gw.ObjectMeta.Namespace}
-
-			By("Updating conditions")
 
 			gwRead := &gatewayapi.Gateway{}
 			Eventually(func() bool {
@@ -382,57 +608,70 @@ var _ = Describe("Gateway controller non-ready resources", func() {
 				if err != nil {
 					return false
 				}
-				GinkgoT().Logf("gwRead cond: %+v\n", gwRead.Status.Conditions)
 				if kubernetes.ConditionsHaveLatestObservedGeneration(gwRead, gwRead.Status.Conditions) != nil {
 					return false
 				}
-				if !conditionStateIs(gwRead, "Accepted", PtrTo(metav1.ConditionTrue), nil, nil) ||
-					!conditionStateIs(gwRead, "Ready", PtrTo(metav1.ConditionFalse), nil, nil) ||
-					!conditionStateIs(gwRead, "Programmed", PtrTo(metav1.ConditionFalse), PtrTo("Pending"), PtrTo("missing 1 resources: configMapTestIntermediate1\\[\\]")) {
+				return conditionStateIs(gwRead, "Ready", PtrTo(metav1.ConditionTrue), nil, nil) &&
+					conditionStateIs(gwRead, "Programmed", PtrTo(metav1.ConditionTrue), nil, nil)
+			}, timeout, interval).Should(BeTrue())
+		})
+
+		It("Should resolve inter resource-references in ConfigMap chain", func() {
+			cm := corev1.ConfigMap{}
+
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: "dst-configmap", Namespace: "default"}, &cm)
+				return err == nil
+			}, timeout, interval).Should(BeTrue())
+
+			Expect(cm.Data["valueRead"]).To(Equal("HELLO, WORLD"))
+			Expect(cm.Data["valueRead2"]).To(Equal("TESTING, ONE TWO HELLO-THREE"))
+		})
+
+		It("Should set Accepted=true on the parent gateway", func() {
+			gwNN := types.NamespacedName{Name: gw.ObjectMeta.Name, Namespace: gw.ObjectMeta.Namespace}
+			gwRead := &gatewayapi.Gateway{}
+
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, gwNN, gwRead)
+				if err != nil {
 					return false
 				}
-				return true
+				return conditionStateIs(gwRead, "Accepted", PtrTo(metav1.ConditionTrue), nil, nil)
+			}, timeout, interval).Should(BeTrue())
+		})
+	})
+
+	When("Blueprint produces a resource that cannot render", func() {
+		BeforeEach(func() {
+			// Override the blueprint with the non-ready variant
+			Expect(k8sClient.Delete(ctx, gwcb)).Should(Succeed())
+			gwcb = newTestBlueprintNonReady()
+			Expect(k8sClient.Create(ctx, gwcb)).Should(Succeed())
+		})
+
+		It("Should report Programmed=false with missing resource message", func() {
+			gw := newTestGateway()
+			Expect(k8sClient.Create(ctx, gw)).Should(Succeed())
+			DeferCleanup(func() {
+				Expect(k8sClient.Delete(ctx, gw)).Should(Succeed())
+			})
+
+			gwNN := types.NamespacedName{Name: gw.ObjectMeta.Name, Namespace: gw.ObjectMeta.Namespace}
+			gwRead := &gatewayapi.Gateway{}
+
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, gwNN, gwRead)
+				if err != nil {
+					return false
+				}
+				if kubernetes.ConditionsHaveLatestObservedGeneration(gwRead, gwRead.Status.Conditions) != nil {
+					return false
+				}
+				return conditionStateIs(gwRead, "Accepted", PtrTo(metav1.ConditionTrue), nil, nil) &&
+					conditionStateIs(gwRead, "Ready", PtrTo(metav1.ConditionFalse), nil, nil) &&
+					conditionStateIs(gwRead, "Programmed", PtrTo(metav1.ConditionFalse), PtrTo("Pending"), PtrTo("missing 1 resources: configMapTestIntermediate1\\[\\]"))
 			}, 5*time.Second, interval).Should(BeTrue())
 		})
 	})
 })
-
-func conditionStateIs(gw *gatewayapi.Gateway, condType string, status *metav1.ConditionStatus, reason, messageRegEx *string) bool {
-	var msgMatch *regexp.Regexp
-	if messageRegEx != nil {
-		msgMatch, _ = regexp.Compile(*messageRegEx)
-	}
-	for _, cond := range gw.Status.Conditions {
-		if cond.Type == condType &&
-			(status == nil || cond.Status == *status) &&
-			(reason == nil || cond.Reason == *reason) &&
-			(messageRegEx == nil || msgMatch.MatchString(cond.Message)) {
-			return true
-		}
-	}
-
-	return false
-}
-
-func setGatewayStatus(nn types.NamespacedName, newCondition *metav1.Condition, address *gatewayapi.GatewayStatusAddress) error {
-	gw := &gatewayapi.Gateway{}
-
-	if err := k8sClient.Get(context.TODO(), nn, gw); err != nil {
-		return err
-	}
-
-	if newCondition != nil {
-		newCondition.ObservedGeneration = gw.ObjectMeta.Generation
-		meta.SetStatusCondition(&gw.Status.Conditions, *newCondition)
-		GinkgoT().Logf("update gw: %+v conditions: %+v\n", gw, newCondition)
-	}
-	if address != nil {
-		gw.Status.Addresses = []gatewayapi.GatewayStatusAddress{}
-		gw.Status.Addresses = append(gw.Status.Addresses, *address)
-	}
-
-	if err := k8sClient.Status().Update(context.TODO(), gw); err != nil {
-		return err
-	}
-	return nil
-}
