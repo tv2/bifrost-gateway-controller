@@ -110,7 +110,7 @@ func parentRefCmp(a, b gatewayapi.ParentReference) bool {
 // Lookup Gateway from parentRef
 func lookupParent(ctx context.Context, r ControllerClient, rt *gatewayapi.HTTPRoute, p gatewayapi.ParentReference) (*gatewayapi.Gateway, error) {
 	if p.Namespace == nil {
-		return lookupGateway(ctx, r, p.Name, rt.ObjectMeta.Namespace)
+		return lookupGateway(ctx, r, p.Name, rt.Namespace)
 	}
 	return lookupGateway(ctx, r, p.Name, string(*p.Namespace))
 }

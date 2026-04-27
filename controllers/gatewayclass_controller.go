@@ -40,7 +40,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	logger "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 	gatewayapi "sigs.k8s.io/gateway-api/apis/v1"
 )
 
@@ -90,7 +90,7 @@ func (r *GatewayClassReconciler) SetupWithManager(mgr ctrl.Manager) error {
 }
 
 func (r *GatewayClassReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	logger := logger.FromContext(ctx)
+	logger := log.FromContext(ctx)
 	logger.Info("reconcile started", "gatewayClass", req.Name)
 
 	var valid = true
@@ -110,7 +110,7 @@ func (r *GatewayClassReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	_, err = lookupGatewayClassBlueprint(ctx, r, gwc)
 	if err != nil {
 		valid = false
-		errWhyInvalid = fmt.Errorf("blueprint for GatewayClass '%s' not found", gwc.ObjectMeta.Name)
+		errWhyInvalid = fmt.Errorf("blueprint for GatewayClass '%s' not found", gwc.Name)
 		logger.Info("blueprint not found for GatewayClass", "gatewayClass", gwc.Name, "parametersRef", gwc.Spec.ParametersRef)
 	}
 
@@ -120,14 +120,14 @@ func (r *GatewayClassReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			Type:               string(gatewayapi.GatewayClassConditionStatusAccepted),
 			Status:             "True",
 			Reason:             string(gatewayapi.GatewayClassReasonAccepted),
-			ObservedGeneration: gwc.ObjectMeta.Generation})
+			ObservedGeneration: gwc.Generation})
 	} else {
 		logger.V(1).Info("InvalidParameters", "gatewayClass", req.Name, "reason", errWhyInvalid)
 		meta.SetStatusCondition(&gwc.Status.Conditions, metav1.Condition{
 			Type:               string(gatewayapi.GatewayClassConditionStatusAccepted),
 			Status:             "False",
 			Reason:             string(gatewayapi.GatewayClassReasonInvalidParameters),
-			ObservedGeneration: gwc.ObjectMeta.Generation})
+			ObservedGeneration: gwc.Generation})
 	}
 
 	err = r.Client().Status().Update(ctx, gwc)
