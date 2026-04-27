@@ -70,5 +70,5 @@ var (
 )
 
 func init() {
-	metrics.Registry.MustRegister(metricPatchApply, metricPatchApplyErrs, metricTemplateErrs, metricResourceGet)
+	metrics.Registry.MustRegister(metricPatchApply, metricPatchApplyErrs, metricTemplateErrs, metricTemplateParseErrs, metricResourceGet)
 }

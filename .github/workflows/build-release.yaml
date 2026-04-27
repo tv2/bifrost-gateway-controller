@@ -8,7 +8,7 @@ on:
       - main
 
 permissions:
-  contents: write
+  contents: read
   packages: write
 
 jobs:
@@ -21,6 +21,8 @@ jobs:
           fetch-depth: 0
 
       - uses: jetify-com/devbox-install-action@22b0f5500b14df4ea357ce673fbd4ced940ed6a1 # tag=v0.13.0
+        with:
+          enable-cache: true
 
       - name: Run tests
         run: |
@@ -30,6 +32,10 @@ jobs:
   release:
     runs-on: ubuntu-latest
     needs: ["tests"]
+    permissions:
+      id-token: write
+      contents: read
+      packages: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -37,29 +43,13 @@ jobs:
           fetch-depth: 0
 
       - uses: jetify-com/devbox-install-action@22b0f5500b14df4ea357ce673fbd4ced940ed6a1 # tag=v0.13.0
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Docker Login
-        uses: docker/login-action@v4
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          enable-cache: true
 
-      # To be compatible with ENVs in 'make build'. Used in '.goreleaser.yaml'
-      - name: Get SHA that triggered release
-        run: |
-          echo -n "HEAD_SHA=" >>${GITHUB_ENV}
-          git rev-parse --short $GITHUB_SHA >>${GITHUB_ENV}
-
-      # This repo both have a Helm chart and a controller with
-      # separate tagging. Filter tags to tell GoReleaser which tag to
-      # use for the controller. We ignore non semver tags.
-      - name: Set GoReleaser GORELEASER_PREVIOUS_TAG
-        run: |
-          echo "GORELEASER_PREVIOUS_TAG=$(git tag -l --sort=-version:refname | grep -E '^[0-9]+\..*' | head -n 2 | tail -n 1)" >> ${GITHUB_ENV}
+      - name: Login to GitHub Container Registry
+        env:
+          GH_ACTOR: ${{ github.actor }}
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GH_ACTOR --password-stdin
 
       # Build release manifests - not to release these, but to force a failure
       # below if repo does not already contain updated manifests
@@ -68,24 +58,17 @@ jobs:
           rm -rf config/release
           devbox run -- make manifest-build
 
-      - name: Make release
+      - name: Build and push container image
+        id: ko
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run:
-          devbox run -- goreleaser release
-
-      - name: Container metadata
-        id: meta
+          KO_DOCKER_REPO: ghcr.io/${{ github.repository }}
+          PLATFORMS: linux/amd64,linux/arm64
         run: |
-          cat dist/artifacts.json  |jq
-          DIGEST=$(cat dist/artifacts.json  | jq '[ .[] | select( .type== "Docker Manifest") | .extra.Digest ]' | jq -r '.[0]')
-          echo "digest=$DIGEST" >> $GITHUB_OUTPUT
-          IMAGE=$(echo ghcr.io/${{ github.repository }})
-          echo "image=$IMAGE@$DIGEST" >> $GITHUB_OUTPUT
+          IMAGE=$(devbox run -- make container | tail -1)
+          echo "image=$IMAGE" >> $GITHUB_OUTPUT
 
     outputs:
-      digest: ${{ steps.meta.outputs.digest }}
-      image: ${{ steps.meta.outputs.image }}
+      image: ${{ steps.ko.outputs.image }}
 
 
   sign:
@@ -113,8 +96,17 @@ jobs:
   verify:
     needs: [ release, sign ]
     runs-on: ubuntu-latest
+    permissions:
+      packages: read
 
     steps:
+    - name: Log in to the Container registry
+      uses: docker/login-action@v4
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
     - uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159 # tag=v3.9.2
 
     - name: Verify signature

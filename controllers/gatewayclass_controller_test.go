@@ -39,76 +39,118 @@ import (
 	. "github.com/onsi/gomega"
 
 	gwcapi "github.com/tv2/bifrost-gateway-controller/apis/gateway.tv2.dk/v1alpha1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/yaml"
 	gatewayapi "sigs.k8s.io/gateway-api/apis/v1"
 )
 
-const gatewayclassManifest string = `
-apiVersion: gateway.networking.k8s.io/v1beta1
-kind: GatewayClass
-metadata:
-  name: cloud-gw
-spec:
-  controllerName: "github.com/tv2/bifrost-gateway-controller"
-  parametersRef:
-    group: gateway.tv2.dk
-    kind: GatewayClassBlueprint
-    name: default-gateway-class`
+// ------------------------------------
+// Test Helpers
+// ------------------------------------
 
-const gatewayclassManifestInvalid string = `
-apiVersion: gateway.networking.k8s.io/v1beta1
-kind: GatewayClass
-metadata:
-  name: cloud-gw-invalid
-spec:
-  controllerName: "github.com/tv2/bifrost-gateway-controller"`
+// newGatewayClassWithBlueprint returns a GatewayClass named "default-gateway-class".
+// This GatewayClass has a ParametersRef that points to a GatewayClassBlueprint named
+func newGatewayClassWithBlueprint() *gatewayapi.GatewayClass {
+	return &gatewayapi.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloud-gw"},
+		Spec: gatewayapi.GatewayClassSpec{
+			ControllerName: "github.com/tv2/bifrost-gateway-controller",
+			ParametersRef: &gatewayapi.ParametersReference{
+				Group: "gateway.tv2.dk",
+				Kind:  "GatewayClassBlueprint",
+				Name:  "default-gateway-class",
+			},
+		},
+	}
+}
 
-const gatewayclassManifestNotOurs string = `
-apiVersion: gateway.networking.k8s.io/v1beta1
-kind: GatewayClass
-metadata:
-  name: not-our-gatewayclass
-spec:
-  controllerName: "github.com/acme/bifrost-gateway-controller"`
+// newGatewayClassNoParams returns a GatewayClass named "cloud-gw-invalid" that
+// has no ParametersRef. This is invalid because our controller requires a
+// ParametersRef to a GatewayClassBlueprint in order to function, so we expect
+// the controller to mark this GatewayClass as invalid when it processes it.
+func newGatewayClassNoParams() *gatewayapi.GatewayClass {
+	return &gatewayapi.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "cloud-gw-invalid"},
+		Spec: gatewayapi.GatewayClassSpec{
+			ControllerName: "github.com/tv2/bifrost-gateway-controller",
+		},
+	}
+}
 
-const gwClassBlueprintManifest string = `
-apiVersion: gateway.tv2.dk/v1alpha1
-kind: GatewayClassBlueprint
+// newGatewayClassNotOurs returns a GatewayClass named "not-our-gatewayclass"
+// that specifies a controller name that does not match our controller. This is
+// used to test that our controller correctly ignores GatewayClasses that it
+// does not own, and does not mark them as accepted or invalid.
+func newGatewayClassNotOurs() *gatewayapi.GatewayClass {
+	return &gatewayapi.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "not-our-gatewayclass"},
+		Spec: gatewayapi.GatewayClassSpec{
+			ControllerName: "github.com/acme/bifrost-gateway-controller",
+		},
+	}
+}
+
+// newMinimalBlueprint returns a minimal valid GatewayClassBlueprint that can be
+// used in tests.
+func newMinimalBlueprint() *gwcapi.GatewayClassBlueprint {
+	return &gwcapi.GatewayClassBlueprint{
+		ObjectMeta: metav1.ObjectMeta{Name: "default-gateway-class"},
+		Spec: gwcapi.GatewayClassBlueprintSpec{
+			GatewayTemplate: gwcapi.ResourceSpec{
+				ResourceTemplate: gwcapi.ResourceTemplate{
+					ResourceTemplates: map[string]string{
+						"istioShadowGw": `apiVersion: gateway.networking.k8s.io/v1beta1
+kind: Gateway
 metadata:
-  name: default-gateway-class
+  name: {{ .Gateway.ObjectMeta.Name }}-istio
+  namespace: {{ .Gateway.metadata.namespace }}
+  annotations:
+    networking.istio.io/service-type: ClusterIP
 spec:
-  gatewayTemplate:
-    resourceTemplates:
-      istioShadowGw: |
-        apiVersion: gateway.networking.k8s.io/v1beta1
-        kind: Gateway
-        metadata:
-          name: {{ .Gateway.ObjectMeta.Name }}-istio
-          namespace: {{ .Gateway.metadata.namespace }}
-          annotations:
-            networking.istio.io/service-type: ClusterIP
-        spec:
-          gatewayClassName: istio
-          listeners:
-            {{- toYaml .Gateway.spec.listeners | nindent 6 }}
-  httpRouteTemplate:
-    resourceTemplates:
-      shadowHttproute: |
-        apiVersion: gateway.networking.k8s.io/v1beta1
-        kind: HTTPRoute
-        metadata:
-          name: {{ .HTTPRoute.ObjectMeta.Name }}-istio
-          namespace: {{ .HTTPRoute.metadata.namespace }}
-        spec:
-          parentRefs:
-          {{ range .HTTPRoute.spec.parentRefs }}
-          - kind: {{ .kind }}
-            name: {{ .name }}-istio
-            namespace: {{ .namespace }}
-          {{ end }}
-          rules:
-          {{ toYaml .HTTPRoute.spec.rules | nindent 4 }}`
+  gatewayClassName: istio
+  listeners:
+    {{- toYaml .Gateway.spec.listeners | nindent 6 }}
+`,
+					},
+				},
+			},
+		},
+	}
+}
+
+// conditionByType returns the first condition matching the given type, or nil.
+func conditionByType(conditions []metav1.Condition, condType string) *metav1.Condition { //nolint:unparam // condType is always the same in current tests but kept for reusability
+	for i := range conditions {
+		if conditions[i].Type == condType {
+			return &conditions[i]
+		}
+	}
+	return nil
+}
+
+// ------------------------------------
+// [GatewayClassReconciler] accessor tests
+// ------------------------------------
+
+var _ = Describe("GatewayClassReconciler", func() {
+
+	It("Should return the client it was constructed with", func() {
+		cl := newFakeClient().Client()
+		r := &GatewayClassReconciler{client: cl}
+		Expect(r.Client()).To(Equal(cl))
+	})
+
+	It("Should return the scheme it was constructed with", func() {
+		s := runtime.NewScheme()
+		r := &GatewayClassReconciler{scheme: s}
+		Expect(r.Scheme()).To(Equal(s))
+	})
+})
+
+// ------------------------------------
+// Integration tests
+// ------------------------------------
 
 var _ = Describe("GatewayClass controller", func() {
 
@@ -117,90 +159,103 @@ var _ = Describe("GatewayClass controller", func() {
 		interval = time.Millisecond * 250
 	)
 
-	var (
-		gwcIn, gwc *gatewayapi.GatewayClass
-		gwcb       *gwcapi.GatewayClassBlueprint
-		ctx        context.Context
-	)
-
-	BeforeEach(func() {
-		ctx = context.Background()
-		gwcIn = &gatewayapi.GatewayClass{}
-		gwc = &gatewayapi.GatewayClass{}
-		gwcb = &gwcapi.GatewayClassBlueprint{}
-	})
+	ctx := context.Background()
 
 	When("A gatewayclass we own is created", func() {
+		var gwc *gatewayapi.GatewayClass
+		var gwcb *gwcapi.GatewayClassBlueprint
+
+		BeforeEach(func() {
+			gwcb = newMinimalBlueprint()
+			Expect(k8sClient.Create(ctx, gwcb)).Should(Succeed())
+			gwc = newGatewayClassWithBlueprint()
+			Expect(k8sClient.Create(ctx, gwc)).Should(Succeed())
+			DeferCleanup(func() {
+				Expect(k8sClient.Delete(ctx, gwc)).Should(Succeed())
+				Expect(k8sClient.Delete(ctx, gwcb)).Should(Succeed())
+			})
+		})
 
 		It("Should be marked as accepted", func() {
+			nn := types.NamespacedName{Name: gwc.Name}
+			fetched := &gatewayapi.GatewayClass{}
 
-			err := yaml.Unmarshal([]byte(gatewayclassManifest), gwcIn)
-			Expect(err).Should(Succeed())
-			Expect(k8sClient.Create(ctx, gwcIn)).Should(Succeed())
-
-			Expect(yaml.Unmarshal([]byte(gwClassBlueprintManifest), gwcb)).To(Succeed())
-			Expect(k8sClient.Create(ctx, gwcb)).Should(Succeed())
-
-			lookupKey := types.NamespacedName{Name: gwcIn.ObjectMeta.Name, Namespace: ""}
-
-			Eventually(func() bool {
-				err := k8sClient.Get(ctx, lookupKey, gwc)
-				if err != nil ||
-					gwc.Status.Conditions[0].Type != string(gatewayapi.GatewayClassConditionStatusAccepted) ||
-					gwc.Status.Conditions[0].Status != "True" {
-					return false
-				}
-				return true
-			}, timeout, interval).Should(BeTrue())
-
-			Expect(k8sClient.Delete(ctx, gwcIn)).Should(Succeed())
-			Expect(k8sClient.Delete(ctx, gwcb)).Should(Succeed())
+			// Use Eventually here to wait for the controller to process the
+			// newly created GatewayClass and update its status with the
+			// Accepted condition. This is necessary because the controller
+			// processes resources asynchronously.
+			Eventually(func(g Gomega) {
+				g.Expect(k8sClient.Get(ctx, nn, fetched)).To(Succeed())
+				cond := conditionByType(fetched.Status.Conditions, string(gatewayapi.GatewayClassConditionStatusAccepted))
+				g.Expect(cond).NotTo(BeNil())
+				g.Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+				g.Expect(cond.Reason).To(Equal(string(gatewayapi.GatewayClassReasonAccepted)))
+			}, timeout, interval).Should(Succeed())
 		})
 	})
 
 	When("An invalid gatewayclass we own is created", func() {
+		var gwc *gatewayapi.GatewayClass
+
+		BeforeEach(func() {
+			gwc = newGatewayClassNoParams()
+			Expect(k8sClient.Create(ctx, gwc)).Should(Succeed())
+			DeferCleanup(func() {
+				Expect(k8sClient.Delete(ctx, gwc)).Should(Succeed())
+			})
+		})
+
 		It("Should be marked as invalid", func() {
+			nn := types.NamespacedName{Name: gwc.Name}
+			fetched := &gatewayapi.GatewayClass{}
 
-			err := yaml.Unmarshal([]byte(gatewayclassManifestInvalid), gwcIn)
-			Expect(err).Should(Succeed())
-			Expect(k8sClient.Create(ctx, gwcIn)).Should(Succeed())
-
-			lookupKey := types.NamespacedName{Name: gwcIn.ObjectMeta.Name, Namespace: ""}
-
-			Eventually(func() bool {
-				err := k8sClient.Get(ctx, lookupKey, gwc)
-				if err != nil ||
-					gwc.Status.Conditions[0].Type != string(gatewayapi.GatewayClassConditionStatusAccepted) ||
-					gwc.Status.Conditions[0].Status != "False" ||
-					gwc.Status.Conditions[0].Reason != string(gatewayapi.GatewayClassReasonInvalidParameters) {
-					return false
-				}
-				return true
-			}, timeout, interval).Should(BeTrue())
-
-			Expect(k8sClient.Delete(ctx, gwcIn)).Should(Succeed())
+			// Use Eventually here to wait for the controller to process the
+			// newly created invalid GatewayClass and update its status with the
+			// Accepted=false condition and the appropriate reason. This is
+			// necessary because the controller processes resources
+			// asynchronously.
+			Eventually(func(g Gomega) {
+				g.Expect(k8sClient.Get(ctx, nn, fetched)).To(Succeed())
+				cond := conditionByType(fetched.Status.Conditions, string(gatewayapi.GatewayClassConditionStatusAccepted))
+				g.Expect(cond).NotTo(BeNil())
+				g.Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+				g.Expect(cond.Reason).To(Equal(string(gatewayapi.GatewayClassReasonInvalidParameters)))
+			}, timeout, interval).Should(Succeed())
 		})
 	})
 
 	When("A gatewayclass we do not own is created", func() {
+		var gwc *gatewayapi.GatewayClass
+
+		BeforeEach(func() {
+			gwc = newGatewayClassNotOurs()
+			Expect(k8sClient.Create(ctx, gwc)).Should(Succeed())
+			DeferCleanup(func() {
+				Expect(k8sClient.Delete(ctx, gwc)).Should(Succeed())
+			})
+		})
+
 		It("Should not be marked as accepted", func() {
+			nn := types.NamespacedName{Name: gwc.Name}
+			fetched := &gatewayapi.GatewayClass{}
 
-			err := yaml.Unmarshal([]byte(gatewayclassManifestNotOurs), gwcIn)
-			Expect(err).Should(Succeed())
-			Expect(k8sClient.Create(ctx, gwcIn)).Should(Succeed())
-
-			lookupKey := types.NamespacedName{Name: gwcIn.ObjectMeta.Name, Namespace: ""}
-
-			Eventually(func() bool {
-				err := k8sClient.Get(ctx, lookupKey, gwc)
-				if err != nil ||
-					gwc.Status.Conditions[0].Status != "Unknown" {
-					return false
+			// Use Eventually here to wait for the controller to process the
+			// newly created GatewayClass that we do not own and check that it
+			// is not marked as accepted. Since the controller should ignore
+			// GatewayClasses that do not specify our controller name, we expect
+			// that either there will be no Accepted condition at all, or if the
+			// controller does set an Accepted condition for some reason, it
+			// will remain in the Unknown state since the controller is not
+			// actively processing it. This test ensures that the controller is
+			// correctly ignoring resources that it does not own.
+			Eventually(func(g Gomega) {
+				g.Expect(k8sClient.Get(ctx, nn, fetched)).To(Succeed())
+				cond := conditionByType(fetched.Status.Conditions, string(gatewayapi.GatewayClassConditionStatusAccepted))
+				// Either no condition at all, or still Unknown
+				if cond != nil {
+					g.Expect(cond.Status).To(Equal(metav1.ConditionUnknown))
 				}
-				return true
-			}, timeout, interval).Should(BeTrue())
-
-			Expect(k8sClient.Delete(ctx, gwcIn)).Should(Succeed())
+			}, timeout, interval).Should(Succeed())
 		})
 	})
 })

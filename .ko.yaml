@@ -1,0 +1,8 @@
+builds:
+  - id: main
+    dir: .
+    main: .
+    ldflags:
+      - -X main.version={{.Env.VERSION}}
+      - -X main.commit={{.Env.VERSION}}
+      - -X main.date={{.Date}}
