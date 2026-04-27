@@ -3,6 +3,9 @@ name: Test PR
 on:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   tests:
     runs-on: ubuntu-latest
@@ -12,7 +15,9 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: jetify-com/devbox-install-action@22b0f5500b14df4ea357ce673fbd4ced940ed6a1 # tag=v0.13.0
+      - uses: jetify-com/devbox-install-action@8c6a66ed6273138b1915457069de78cb52fe3bd7 # tag=v0.15.0
+        with:
+          enable-cache: true
 
       - name: Run tests
         run: |
@@ -35,7 +40,9 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: jetify-com/devbox-install-action@22b0f5500b14df4ea357ce673fbd4ced940ed6a1 # tag=v0.13.0
+      - uses: jetify-com/devbox-install-action@8c6a66ed6273138b1915457069de78cb52fe3bd7 # tag=v0.15.0
+        with:
+          enable-cache: true
 
       - name: Run golangci-lint
         run:
@@ -51,28 +58,12 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+      - uses: jetify-com/devbox-install-action@8c6a66ed6273138b1915457069de78cb52fe3bd7 # tag=v0.15.0
+        with:
+          enable-cache: true
 
-      - uses: jetify-com/devbox-install-action@22b0f5500b14df4ea357ce673fbd4ced940ed6a1 # tag=v0.13.0
-
-      # Use goreleaser snapshot builds for PR builds to avoid duplication
-      # This is a bit convoluted - see also goreleaser nightly builds feature
-
-      - name: Downcase repository if it has upper case chars
+      - name: Build container image (local only)
+        env:
+          KO_DOCKER_REPO: ko.local
         run: |
-          echo "REGISTRY=ghcr.io/${GITHUB_REPOSITORY,,}" >>${GITHUB_ENV}
-
-      - name: Get SHA that triggered PR
-        run: |
-          echo -n "HEAD_SHA=" >>${GITHUB_ENV}
-          git rev-parse --short "${{ github.event.pull_request.head.sha }}" >>${GITHUB_ENV}
-
-      - name: Make PR build
-        run:
-          devbox run -- goreleaser release --clean --snapshot
-
-      - name: List PR images
-        run: |
-          docker image ls --format "{{.Repository}}:{{.Tag}}" | \
-            grep -ie "${{ github.repository}}:.*${HEAD_SHA}.*"
+          devbox run -- make container

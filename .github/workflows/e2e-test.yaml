@@ -3,6 +3,9 @@ name: E2E-test
 on:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   tests:
     runs-on: ubuntu-latest
@@ -12,19 +15,23 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: jetify-com/devbox-install-action@22b0f5500b14df4ea357ce673fbd4ced940ed6a1 # tag=v0.13.0
-
-      - name: Build controller and container
-        run: |
-          devbox run -- make build docker-build
+      - uses: jetify-com/devbox-install-action@8c6a66ed6273138b1915457069de78cb52fe3bd7 # tag=v0.15.0
+        with:
+          enable-cache: true
 
       - name: Setup E2E KIND cluster
         run: |
           devbox run -- make setup-e2e-test-cluster wait-ready-external-dns-test
 
+      - name: Build controller and container
+        env:
+          KO_DOCKER_REPO: kind.local
+        run: |
+          devbox run -- make build container
+
       - name: Deploy controller to cluster
         run: |
-          devbox run -- make install cluster-load-controller-image deploy
+          devbox run -- make install deploy
           # Wait for controller to be ready - this allows for short and concise test timeouts
           until kubectl -n bifrost-gateway-controller-system wait pods -lcontrol-plane=controller-manager --for condition=Ready --timeout=120s   ; do echo "."; sleep 1; done
 

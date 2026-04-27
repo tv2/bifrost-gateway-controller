@@ -87,7 +87,7 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred())
 	Expect(cfg).NotTo(BeNil())
 
-	err = gatewayapi.AddToScheme(scheme.Scheme)
+	err = gatewayapi.Install(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
 
 	err = gcapi.AddToScheme(scheme.Scheme)
@@ -105,7 +105,7 @@ var _ = BeforeSuite(func() {
 	}
 	httpClient, err := rest.HTTPClientFor(cfg)
 	Expect(err).ToNot(HaveOccurred())
-	restClient, err = apiutil.RESTClientForGVK(gvk, false, cfg, serializer.NewCodecFactory(scheme.Scheme), httpClient)
+	restClient, err = apiutil.RESTClientForGVK(gvk, false, false, cfg, serializer.NewCodecFactory(scheme.Scheme), httpClient)
 	Expect(err).NotTo(HaveOccurred())
 })
 

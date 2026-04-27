@@ -82,15 +82,17 @@ func main() {
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
 	flag.StringVar(&syncPeriodArg, "sync-period", "120s", "The period between non event-driven resynchronizations")
-	flag.StringVar(&controllers.ControllerNamespace, "controller-namespace", "bifrost-gateway-controller-system", "The namespace the controller will watch for global policies")
-	opts := zap.Options{
-		Development: true,
-	}
+	flag.StringVar(&controllers.ControllerNamespace, "controller-namespace", "gateway-controller", "The namespace the controller will watch for global policies")
+	opts := zap.Options{}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
-	setupLog.Info("bifrost-gateway-controller", "version", version, "build-date", date, "commit", commit)
+	logLevel := flag.Lookup("zap-log-level").Value.String()
+	if logLevel == "" {
+		logLevel = "info"
+	}
+	setupLog.Info("bifrost-gateway-controller", "version", version, "build-date", date, "commit", commit, "log-level", logLevel)
 
 	syncPeriod, err := time.ParseDuration(syncPeriodArg)
 	if err != nil {

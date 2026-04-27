@@ -35,7 +35,7 @@ spec:
         - --zap-devel=false
         {{- end }}
         command:
-        - /bifrost-gateway-controller
+        - /ko-app/bifrost-gateway-controller
         {{- if (contains "sha256:" .Values.controller.image.tag) }}
         image: "{{ .Values.controller.image.repository }}/{{ .Values.controller.image.name }}@{{ .Values.controller.image.tag }}"
           {{- else }}

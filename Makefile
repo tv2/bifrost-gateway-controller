@@ -29,6 +29,16 @@
 
 include Makefile.local
 
+KO_DOCKER_REPO ?= kind.local
+KIND_CLUSTER_NAME ?= kind-gwc-dev-cluster
+PLATFORMS ?= linux/amd64,linux/arm64
+VERSION ?= $(shell git describe --tags --always --dirty --abbrev=12)
+CGO_ENABLED = 0
+ARCH ?= $(shell uname -o | tr '[:upper:]' '[:lower:]')
+CPU ?= $(shell uname -m)
+
+.EXPORT_ALL_VARIABLES:
+
 # Image URL to use all building/pushing image targets
 IMG ?= ghcr.io/tv2/bifrost-gateway-controller:latest
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
@@ -119,8 +129,7 @@ BUILD_COMMIT = $(shell git describe --match="" --always --abbrev=20 --dirty)
 
 .PHONY: build
 build: generate fmt vet ## Build manager binary.
-	# The 'GOOS=linux GOARCH=amd64' ensures this also works on non-Linux/x86, e.g. Mac/Colima
-	HEAD_SHA=$(shell git describe --match="" --always --abbrev=7 --dirty) GOOS=linux GOARCH=amd64 goreleaser build --single-target --clean --snapshot --output $(PWD)/bifrost-gateway-controller
+	go build -ldflags="-X main.version=$(VERSION) -X main.commit=$(VERSION) -X main.date=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)" -o ./bin/$(ARCH)-$(CPU)/bifrost-gateway-controller .
 
 .PHONY: run
 run: manifests generate fmt vet ## Run a controller from your host.
@@ -132,33 +141,10 @@ manifest-build:
 	kustomize build config/crd -o config/release/crds.yaml
 	kustomize build config/default -o config/release/install.yaml
 
-# If you wish built the manager image targeting other platforms you can use the --platform flag.
-# (i.e. docker build --platform linux/arm64 ). However, you must enable docker buildKit for it.
-# More info: https://docs.docker.com/develop/develop-images/build_enhancements/
-.PHONY: docker-build
-docker-build: test ## Build docker image with the manager.
-	docker build -t ${IMG} .
-
-.PHONY: docker-push
-docker-push: ## Push docker image with the manager.
-	docker push ${IMG}
-
-# PLATFORMS defines the target platforms for  the manager image be build to provide support to multiple
-# architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:
-# - able to use docker buildx . More info: https://docs.docker.com/build/buildx/
-# - have enable BuildKit, More info: https://docs.docker.com/develop/develop-images/build_enhancements/
-# - be able to push the image for your registry (i.e. if you do not inform a valid value via IMG=<myregistry/image:<tag>> than the export will fail)
-# To properly provided solutions that supports more than one platform you should use this option.
-PLATFORMS ?= linux/arm64,linux/amd64,linux/s390x,linux/ppc64le
-.PHONY: docker-buildx
-docker-buildx: test ## Build and push docker image for the manager for cross-platform support
-	# copy existing Dockerfile and insert --platform=${BUILDPLATFORM} into Dockerfile.cross, and preserve the original Dockerfile
-	sed -e '1 s/\(^FROM\)/FROM --platform=\$$\{BUILDPLATFORM\}/; t' -e ' 1,// s//FROM --platform=\$$\{BUILDPLATFORM\}/' Dockerfile > Dockerfile.cross
-	- docker buildx create --name project-v3-builder
-	docker buildx use project-v3-builder
-	- docker buildx build --push --platform=$(PLATFORMS) --tag ${IMG} -f Dockerfile.cross
-	- docker buildx rm project-v3-builder
-	rm Dockerfile.cross
+.PHONY: container
+container: ## Build container image with ko.
+	@ko build --base-import-paths -t latest -t "sha-$(VERSION)" --platform=$(PLATFORMS) \
+		--image-label org.opencontainers.image.source=https://github.com/tv2/bifrost-gateway-controller .
 
 ##@ Deployment
 
@@ -174,10 +160,20 @@ install: manifests  ## Install CRDs into the K8s cluster specified in ~/.kube/co
 uninstall: manifests  ## Uninstall CRDs from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
 	kustomize build config/crd | kubectl delete --ignore-not-found=$(ignore-not-found) -f -
 
+CONTROLLER_ARGS ?= --zap-log-level=1
+
 .PHONY: deploy
 deploy: manifests  ## Deploy controller to the K8s cluster specified in ~/.kube/config.
 	cd config/manager && kustomize edit set image controller=${IMG}
 	kustomize build config/kind | kubectl apply -f -
+	@JSON_ARGS=$$(echo '$(CONTROLLER_ARGS)' | awk '{for(i=1;i<=NF;i++) printf "\"%s\",", $$i}' | sed 's/,$$//'); \
+	kubectl patch deployment/bifrost-gateway-controller-controller-manager -n bifrost-gateway-controller-system \
+		--type=json -p="[{\"op\":\"replace\",\"path\":\"/spec/template/spec/containers/0/args\",\"value\":[$$JSON_ARGS]}]"
+
+.PHONY: redeploy
+redeploy: container deploy  ## Build, deploy, and restart the controller on the KIND cluster.
+	kubectl rollout restart deployment -n bifrost-gateway-controller-system bifrost-gateway-controller-controller-manager
+	kubectl rollout status deployment -n bifrost-gateway-controller-system bifrost-gateway-controller-controller-manager --timeout=90s
 
 .PHONY: undeploy
 undeploy: ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
