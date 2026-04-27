@@ -65,11 +65,11 @@ func TestUnit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error initializing Kubernetes client: %v", err)
 	}
-	err = v1alpha2.AddToScheme(client.Scheme())
+	err = v1alpha2.Install(client.Scheme())
 	if err != nil {
 		t.Fatalf("Error adding scheme: %v", err)
 	}
-	err = v1beta1.AddToScheme(client.Scheme())
+	err = v1beta1.Install(client.Scheme())
 	if err != nil {
 		t.Fatalf("Error adding scheme: %v", err)
 	}
