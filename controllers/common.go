@@ -186,8 +186,6 @@ func lookupValues(ctx context.Context, r ControllerClient, gatewayClassName stri
 	// Policies are kept ordered by hierarchy level (least specific first). Within each level,
 	// policies are sorted by creation timestamp then alphabetically per GEP-713 conflict resolution.
 	// See https://gateway-api.sigs.k8s.io/geps/gep-713/#established-and-challenger-policy-specs
-	var gwccFiltered []*gwcapi.GatewayClassConfig
-	var gwcFiltered []*gwcapi.GatewayConfig
 
 	// Helpers to sort a sub-group by creation timestamp (oldest first), then alphabetically
 	// by {namespace}/{name} for stable conflict resolution per GEP-713
@@ -223,7 +221,6 @@ func lookupValues(ctx context.Context, r ControllerClient, gatewayClassName stri
 		}
 	}
 	sortGwcc(gwccGlobalGroup)
-	gwccFiltered = append(gwccFiltered, gwccGlobalGroup...)
 
 	// Namespace GatewayClassConfig targeting namespace second
 	var gwccNsGroup []*gwcapi.GatewayClassConfig
@@ -236,7 +233,6 @@ func lookupValues(ctx context.Context, r ControllerClient, gatewayClassName stri
 		}
 	}
 	sortGwcc(gwccNsGroup)
-	gwccFiltered = append(gwccFiltered, gwccNsGroup...)
 
 	// Namespace GatewayClassConfig targeting GatewayClass third (most specific)
 	var gwccLocalGwcGroup []*gwcapi.GatewayClassConfig
@@ -249,6 +245,10 @@ func lookupValues(ctx context.Context, r ControllerClient, gatewayClassName stri
 		}
 	}
 	sortGwcc(gwccLocalGwcGroup)
+
+	gwccFiltered := make([]*gwcapi.GatewayClassConfig, 0, len(gwccGlobalGroup)+len(gwccNsGroup)+len(gwccLocalGwcGroup))
+	gwccFiltered = append(gwccFiltered, gwccGlobalGroup...)
+	gwccFiltered = append(gwccFiltered, gwccNsGroup...)
 	gwccFiltered = append(gwccFiltered, gwccLocalGwcGroup...)
 
 	// Namespace GatewayConfig targeting namespace first (less specific)
@@ -262,7 +262,6 @@ func lookupValues(ctx context.Context, r ControllerClient, gatewayClassName stri
 		}
 	}
 	sortGwc(gwcNsGroup)
-	gwcFiltered = append(gwcFiltered, gwcNsGroup...)
 
 	// Parent resource GatewayConfig second (most specific)
 	var gwcGwGroup []*gwcapi.GatewayConfig
@@ -276,6 +275,9 @@ func lookupValues(ctx context.Context, r ControllerClient, gatewayClassName stri
 		}
 	}
 	sortGwc(gwcGwGroup)
+
+	gwcFiltered := make([]*gwcapi.GatewayConfig, 0, len(gwcNsGroup)+len(gwcGwGroup))
+	gwcFiltered = append(gwcFiltered, gwcNsGroup...)
 	gwcFiltered = append(gwcFiltered, gwcGwGroup...)
 
 	logger.V(1).Info("filtered policies", "gatewayClassConfigs", len(gwccFiltered), "gatewayConfigs", len(gwcFiltered))
