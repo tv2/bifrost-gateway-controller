@@ -256,16 +256,16 @@ func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			templateValues.Resources = buildResourceValues(templates)
 
 			renderedNum, existsNum = renderTemplates(ctx, r, &rt, templates, &templateValues, isFinalAttempt)
-			logger.V(1).Info("rendered templates", "rendered", renderedNum, "exists", existsNum, "attempt", attempt)
+			logger.V(1).Info("rendered resources", "rendered", renderedNum, "exists", existsNum, "attempt", attempt)
 
 			if err := applyTemplates(ctx, r, &rt, templates); err != nil {
 				logger.Error(err, "unable to apply templates", parentDebugCtx...)
 				return ctrl.Result{}, fmt.Errorf("unable to apply templates: %w", err)
 			}
 		}
-		// If we haven't already decided to requeue, then requeue if not all templates could render (possibly a missing dependency)
-		requeue = requeue || (renderedNum != len(templates))
-		logger.V(1).Info("template loop completed", "parentGateway", parent.Name, "renderedNum", renderedNum, "totalNum", len(templates), "requeue", requeue)
+		// If we haven't already decided to requeue, then requeue if not all resources could be found
+		requeue = requeue || (renderedNum != existsNum)
+		logger.V(1).Info("template loop completed", "parentGateway", parent.Name, "renderedNum", renderedNum, "existsNum", existsNum, "requeue", requeue)
 
 		// FIXME errors in templating and status of sub-resources in general should set status conditions
 

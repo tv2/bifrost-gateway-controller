@@ -179,7 +179,7 @@ func renderTemplates(ctx context.Context, r ControllerDynClient, parent metav1.O
 			}
 			logger.V(1).Info("template rendered", "templateName", tmpl.TemplateName, "resources", len(tmpl.Resources))
 		}
-		rendered++
+		rendered += len(tmpl.Resources)
 		for resIdx := range tmpl.Resources {
 			res := &tmpl.Resources[resIdx]
 			if res.Current == nil {
@@ -199,8 +199,8 @@ func renderTemplates(ctx context.Context, r ControllerDynClient, parent metav1.O
 			} else {
 				logger.V(1).Info("current resource already cached", "templateName", tmpl.TemplateName, "resourceName", res.Rendered.GetName())
 			}
+			exists++
 		}
-		exists++
 	}
 	return rendered, exists
 }
