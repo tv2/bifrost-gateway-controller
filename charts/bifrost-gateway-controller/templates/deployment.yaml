@@ -30,6 +30,7 @@ spec:
       containers:
       - args:
         - --leader-elect
+        - --controller-namespace={{ .Release.Namespace }}
         - --zap-log-level={{ .Values.controller.logging.level }}
         {{ if eq .Values.controller.logging.format "json" -}}
         - --zap-devel=false
