@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "gateway-controller.fullname" . }}-manager
+  namespace: {{ .Release.Namespace }}
   labels:
     {{- include "gateway-controller.labels" . | nindent 4 }}
   {{- with .Values.controller.annotations }}
