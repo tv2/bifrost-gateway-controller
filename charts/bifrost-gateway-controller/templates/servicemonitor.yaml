@@ -3,6 +3,7 @@ apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
   name: {{ include "gateway-controller.fullname" . }}-manager-metrics
+  namespace: {{ .Release.Namespace }}
   labels:
     control-plane: manager
     {{- include "gateway-controller.labels" . | nindent 4 }}
