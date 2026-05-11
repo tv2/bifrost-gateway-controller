@@ -72,7 +72,7 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
 
-    - uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # tag=v4.1.1
+    - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # tag=v4.1.2
 
     - name: Sign chart
       run: cosign sign --yes -a "chartVersion=${{ needs.release-helm.outputs.chartVersion }}" ${{ needs.release-helm.outputs.chart }}
@@ -92,7 +92,7 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
 
-    - uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # tag=v4.1.1
+    - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # tag=v4.1.2
 
     - name: Verify signature
       run: cosign verify --certificate-identity-regexp 'https://github.com/${{ github.repository }}/.github/workflows/chart-publish.yaml@refs/.*' --certificate-oidc-issuer https://token.actions.githubusercontent.com ${{ needs.release-helm.outputs.chart }}
