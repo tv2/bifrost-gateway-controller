@@ -11,6 +11,7 @@ spec:
         threshold: 2
         path: /healthz/ready
         port: 15021
+      idleTimeout: 60
       hpa:
         minReplicas: 1  # optional
         maxReplicas: 3  # Optional, will default to minReplicas if minReplicas is defined
@@ -118,6 +119,7 @@ spec:
             name: {{ .Values.providerConfigName }}
           forProvider:
             dropInvalidHeaderFields: true
+            idleTimeout: {{ .Values.idleTimeout }}
             internal: {{ .Values.internal }}
             name: gw-{{ .Gateway.metadata.namespace }}-{{ .Gateway.metadata.name }}
             region: {{ .Values.region }}
