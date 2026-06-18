@@ -2,7 +2,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.16.4
+    controller-gen.kubebuilder.io/version: v0.18.0
   name: gatewayclassblueprints.gateway.tv2.dk
 spec:
   group: gateway.tv2.dk
@@ -162,7 +162,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.16.4
+    controller-gen.kubebuilder.io/version: v0.18.0
   labels:
     gateway.networking.k8s.io/policy: "true"
   name: gatewayclassconfigs.gateway.tv2.dk
@@ -326,7 +326,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.16.4
+    controller-gen.kubebuilder.io/version: v0.18.0
   labels:
     gateway.networking.k8s.io/policy: "true"
   name: gatewayconfigs.gateway.tv2.dk
