@@ -57,6 +57,9 @@ jobs:
         run: |
           rm -rf config/release
           devbox run -- make manifest-build
+          status=$(git status --porcelain)
+          echo "$status"
+          if [[ -z "$status" ]]; then echo "No repo changes"; else echo "Repo have unexpected changes"; exit 1; fi
 
       - name: Build and push container image
         id: ko
