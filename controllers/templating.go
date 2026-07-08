@@ -173,7 +173,7 @@ func renderTemplates(ctx context.Context, r ControllerDynClient, parent metav1.O
 					logger.V(2).Info("template render failure details", "templateName", tmpl.TemplateName, "template", tmpl.StringTemplate, "values", values)
 					metricTemplateErrs.Inc()
 				} else {
-					logger.V(1).Info("template render deferred (missing dependency)", "templateName", tmpl.TemplateName, "error", err)
+					logger.Error(err, "template render deferred (missing dependency)", "templateName", tmpl.TemplateName)
 				}
 				continue
 			}
