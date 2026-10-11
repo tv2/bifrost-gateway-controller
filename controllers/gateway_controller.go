@@ -33,6 +33,7 @@ package controllers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -41,6 +42,7 @@ import (
 	"github.com/mitchellh/mapstructure"
 	gwcapi "github.com/tv2/bifrost-gateway-controller/apis/gateway.tv2.dk/v1alpha1"
 	"k8s.io/apimachinery/pkg/api/equality"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -225,7 +227,8 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	templates, err := parseTemplates(gwcb.Spec.GatewayTemplate.ResourceTemplates)
 	if err != nil {
 		logger.Error(err, "cannot parse templates", debugContext...)
-		return ctrl.Result{}, fmt.Errorf("cannot parse templates: %w", err)
+		failure := fmt.Errorf("cannot parse templates: %w", err)
+		return ctrl.Result{}, r.updateGatewayFailureStatus(ctx, &gw, failure)
 	}
 
 	debugContext = append(debugContext, "templateCount", len(templates))
@@ -250,8 +253,13 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 		if err = applyTemplates(ctx, r, &gw, templates); err != nil {
 			logger.Error(err, "unable to apply templates", debugContext...)
-			errStatus = fmt.Errorf("unable to apply templates: %w", err)
 		}
+	}
+	for _, tmpl := range templates {
+		if tmpl.RenderError != nil {
+			errStatus = errors.Join(errStatus, fmt.Errorf("cannot render template %q: %w", tmpl.TemplateName, tmpl.RenderError))
+		}
+		errStatus = errors.Join(errStatus, tmpl.ApplyError)
 	}
 
 	requeue = (renderedNum != existsNum)
@@ -304,39 +312,25 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 	// Consider Gateway as 'programmed' when all resources have
 	// been templated and applied
-	progStatus := metav1.ConditionFalse
-	progReason := "Pending"
-	progMsg := ""
-	missing := statusExistingTemplates(templates)
-	if len(missing) == 0 { // 'Programmed' when all templates rendered and all resources exist
-		progStatus = metav1.ConditionTrue
-		progReason = string(gatewayapi.GatewayReasonProgrammed)
-	} else {
-		sort.Strings(missing)
-		progMsg = fmt.Sprintf("missing %v resources: %s", len(missing), strings.Join(missing, ","))
-	}
-	meta.SetStatusCondition(&gw.Status.Conditions, metav1.Condition{
-		Type:               string(gatewayapi.GatewayConditionProgrammed),
-		Status:             progStatus,
-		Reason:             progReason,
-		Message:            progMsg,
-		ObservedGeneration: gw.Generation})
+	programmedCondition := gatewayProgrammedCondition(&gw, templates, errStatus)
+	meta.SetStatusCondition(&gw.Status.Conditions, programmedCondition)
 
 	// Set `Ready` condition based on child resource statuses, status update and programmed status
 	status := metav1.ConditionFalse
 	isReady, readyReason, err := statusIsReady(templates)
 	if err != nil {
 		logger.Error(err, "unable to update status condition due to sub-resource status error", "gateway", req.NamespacedName)
-		return ctrl.Result{}, err
+		errStatus = errors.Join(errStatus, err)
 	}
 	logger.V(1).Info("gateway readiness", "gateway", req.NamespacedName, "ready", isReady, "reason", readyReason)
-	if isReady && statusUpdateOK && progStatus == metav1.ConditionTrue {
+	if isReady && statusUpdateOK && programmedCondition.Status == metav1.ConditionTrue {
 		status = metav1.ConditionTrue
 	}
 	meta.SetStatusCondition(&gw.Status.Conditions, metav1.Condition{
 		Type:               string(gatewayapi.GatewayConditionReady), //nolint:staticcheck // "Ready" is reserved for future use
 		Status:             status,
 		Reason:             string(gatewayapi.GatewayReasonReady), //nolint:staticcheck // "Ready" is reserved for future use
+		Message:            programmedCondition.Message,
 		ObservedGeneration: gw.Generation})
 
 	if !equality.Semantic.DeepEqual(beforeStatusUpdate.Status, gw.Status) {
@@ -346,6 +340,9 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		}
 	}
 
+	if errStatus != nil {
+		return ctrl.Result{}, errStatus
+	}
 	if requeue {
 		if renderedNum != existsNum {
 			logger.Info("requeuing, not all resources available", "renderedNum", renderedNum, "existsNum", existsNum)
@@ -356,6 +353,46 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 	logger.Info("reconcile completed successfully", "gateway", req.NamespacedName)
 	return ctrl.Result{}, errStatus
+}
+
+func (r *GatewayReconciler) updateGatewayFailureStatus(ctx context.Context, gw *gatewayapi.Gateway, failure error) error {
+	beforeFailureStatus := gw.DeepCopy()
+	for _, conditionType := range []string{string(gatewayapi.GatewayConditionProgrammed), "Ready"} {
+		meta.SetStatusCondition(&gw.Status.Conditions, metav1.Condition{
+			Type: conditionType, Status: metav1.ConditionFalse, Reason: "Invalid", Message: failure.Error(), ObservedGeneration: gw.Generation,
+		})
+	}
+	if equality.Semantic.DeepEqual(beforeFailureStatus.Status, gw.Status) {
+		return failure
+	}
+	return errors.Join(failure, r.Client().Status().Update(ctx, gw))
+}
+
+func gatewayProgrammedCondition(gw *gatewayapi.Gateway, templates []*ResourceTemplateState, failure error) metav1.Condition {
+	condition := metav1.Condition{
+		Type:               string(gatewayapi.GatewayConditionProgrammed),
+		Status:             metav1.ConditionFalse,
+		Reason:             "Pending",
+		ObservedGeneration: gw.Generation,
+	}
+	missing := statusExistingTemplates(templates)
+	if len(missing) == 0 && failure == nil {
+		condition.Status = metav1.ConditionTrue
+		condition.Reason = string(gatewayapi.GatewayReasonProgrammed)
+	} else if len(missing) > 0 {
+		sort.Strings(missing)
+		condition.Message = fmt.Sprintf("missing %v resources: %s", len(missing), strings.Join(missing, ","))
+	}
+	if failure != nil {
+		if apierrors.IsInvalid(failure) || apierrors.IsBadRequest(failure) {
+			condition.Reason = "Invalid"
+		}
+		if condition.Message != "" {
+			condition.Message += "; "
+		}
+		condition.Message += failure.Error()
+	}
+	return condition
 }
 
 func updateGatewayAddresses(ctx context.Context, gw *gatewayapi.Gateway, statusTemplate string, values *TemplateValues) bool {
