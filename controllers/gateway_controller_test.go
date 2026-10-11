@@ -42,10 +42,15 @@ import (
 	. "github.com/onsi/gomega"
 	gwcapi "github.com/tv2/bifrost-gateway-controller/apis/gateway.tv2.dk/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/validation/field"
+	fakedynamic "k8s.io/client-go/dynamic/fake"
 	ktesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/util/workqueue"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -59,6 +64,98 @@ import (
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/gateway-api/conformance/utils/kubernetes"
 )
+
+func TestGatewayFailureStatus(t *testing.T) {
+	ctx := context.Background()
+	validTemplate := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: output\n  namespace: default\ndata:\n  value: valid\n"
+	for _, scenario := range []struct {
+		name     string
+		template string
+		existing bool
+		reject   bool
+	}{
+		{name: "template syntax", template: "{{ .Values.value }"},
+		{name: "malformed YAML", template: "apiVersion: v1\nkind: ConfigMap\ndata: ["},
+		{name: "rejected create", template: validTemplate, reject: true},
+		{name: "rejected update", template: validTemplate, existing: true, reject: true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			gateway := newTestGateway()
+			gateway.Generation = 3
+			meta.SetStatusCondition(&gateway.Status.Conditions, metav1.Condition{Type: "Programmed", Status: metav1.ConditionTrue, Reason: "Programmed", ObservedGeneration: 2})
+			blueprint := newTestBlueprint()
+			blueprint.Spec.GatewayTemplate = gwcapi.ResourceSpec{ResourceTemplate: gwcapi.ResourceTemplate{ResourceTemplates: map[string]string{"output": scenario.template}}}
+			fakeClient := newFakeDynClient(gateway, newTestGatewayClass(), blueprint)
+			if err := corev1.AddToScheme(fakeClient.scheme); err != nil {
+				t.Fatal(err)
+			}
+			mapper := meta.NewDefaultRESTMapper([]schema.GroupVersion{corev1.SchemeGroupVersion})
+			mapper.Add(corev1.SchemeGroupVersion.WithKind("ConfigMap"), meta.RESTScopeNamespace)
+			fakeClient.cl = fake.NewClientBuilder().WithScheme(fakeClient.scheme).WithRESTMapper(mapper).WithStatusSubresource(gateway).
+				WithObjects(gateway, newTestGatewayClass(), blueprint).Build()
+			dynamicClient := fakeClient.dyn.(*fakedynamic.FakeDynamicClient)
+			child := &unstructured.Unstructured{Object: map[string]any{
+				"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "output", "namespace": "default"}, "data": map[string]any{"value": "old"},
+			}}
+			if scenario.existing {
+				if err := dynamicClient.Tracker().Add(child); err != nil {
+					t.Fatal(err)
+				}
+			}
+			reject := scenario.reject
+			dynamicClient.PrependReactor("patch", "configmaps", func(action ktesting.Action) (bool, runtime.Object, error) {
+				if !reject {
+					return false, nil, nil
+				}
+				return true, nil, apierrors.NewInvalid(schema.GroupKind{Kind: "ConfigMap"}, "output", field.ErrorList{field.Invalid(field.NewPath("data", "value"), 123, "must be a string")})
+			})
+			controller := &GatewayReconciler{client: fakeClient.cl, scheme: fakeClient.scheme, dynClient: fakeClient.dyn}
+			request := reconcile.Request{NamespacedName: client.ObjectKeyFromObject(gateway)}
+			result, err := controller.Reconcile(ctx, request)
+			if err == nil || result != (reconcile.Result{}) {
+				t.Fatalf("failure should return an error, not swallow it in requeue: result=%v error=%v", result, err)
+			}
+			actual := &gatewayapi.Gateway{}
+			if err := fakeClient.cl.Get(ctx, request.NamespacedName, actual); err != nil {
+				t.Fatal(err)
+			}
+			for _, conditionType := range []string{"Programmed", "Ready"} {
+				condition := meta.FindStatusCondition(actual.Status.Conditions, conditionType)
+				if condition == nil || condition.Status != metav1.ConditionFalse || condition.ObservedGeneration != 3 || condition.Message == "" {
+					t.Fatalf("%s failure condition not published: %v", conditionType, condition)
+				}
+				if !regexp.MustCompile("output").MatchString(condition.Message) {
+					t.Fatalf("condition lacks template identity: %v", condition)
+				}
+			}
+			if scenario.reject && !apierrors.IsInvalid(err) {
+				t.Fatalf("underlying API validation error lost: %v", err)
+			}
+			reject = false
+			blueprint.Spec.GatewayTemplate.ResourceTemplates["output"] = validTemplate
+			if err := fakeClient.cl.Update(ctx, blueprint); err != nil {
+				t.Fatal(err)
+			}
+			if !scenario.existing {
+				if err := dynamicClient.Tracker().Add(child); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := controller.Reconcile(ctx, request); err != nil {
+				t.Fatalf("recovery failed: %v", err)
+			}
+			if err := fakeClient.cl.Get(ctx, request.NamespacedName, actual); err != nil {
+				t.Fatal(err)
+			}
+			for _, conditionType := range []string{"Programmed", "Ready"} {
+				condition := meta.FindStatusCondition(actual.Status.Conditions, conditionType)
+				if condition == nil || condition.Status != metav1.ConditionTrue || condition.Message != "" {
+					t.Fatalf("%s did not recover: %v", conditionType, condition)
+				}
+			}
+		})
+	}
+}
 
 func TestDeletingTemplateParents(t *testing.T) {
 	ctx := context.Background()
