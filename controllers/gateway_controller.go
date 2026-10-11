@@ -108,7 +108,7 @@ func (r *GatewayReconciler) gatewaysForConfig(ctx context.Context, object client
 	switch config := object.(type) {
 	case *gwcapi.GatewayClassConfig:
 		target = config.Spec.TargetRef
-		global = config.Namespace == ControllerNamespace && target.Kind == "GatewayClass" && target.Group == gatewayapi.GroupName
+		global = config.Namespace == ControllerNamespace && target.Kind == gatewayClassKind && target.Group == gatewayapi.GroupName
 	case *gwcapi.GatewayConfig:
 		target = config.Spec.TargetRef
 	default:
@@ -126,13 +126,14 @@ func (r *GatewayReconciler) gatewaysForConfig(ctx context.Context, object client
 	}
 
 	var requests []reconcile.Request
-	for _, gateway := range gateways.Items {
+	for gatewayIndex := range gateways.Items {
+		gateway := &gateways.Items[gatewayIndex]
 		matches := false
 		switch {
-		case target.Group == gatewayapi.GroupName && target.Kind == "GatewayClass":
+		case target.Group == gatewayapi.GroupName && target.Kind == gatewayClassKind:
 			_, isClassConfig := object.(*gwcapi.GatewayClassConfig)
 			matches = isClassConfig && string(gateway.Spec.GatewayClassName) == string(target.Name)
-		case target.Group == "" && target.Kind == "Namespace":
+		case target.Group == "" && target.Kind == namespaceKind:
 			matches = gateway.Namespace == string(target.Name)
 		case target.Group == gatewayapi.GroupName && target.Kind == "Gateway":
 			_, isGatewayConfig := object.(*gwcapi.GatewayConfig)
