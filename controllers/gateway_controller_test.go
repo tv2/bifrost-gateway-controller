@@ -131,6 +131,18 @@ func TestGatewayFailureStatus(t *testing.T) {
 			if scenario.reject && !apierrors.IsInvalid(err) {
 				t.Fatalf("underlying API validation error lost: %v", err)
 			}
+			if scenario.name == "template syntax" {
+				resourceVersion := actual.ResourceVersion
+				if _, err := controller.Reconcile(ctx, request); err == nil {
+					t.Fatal("repeated syntax failure should still return an error")
+				}
+				if err := fakeClient.cl.Get(ctx, request.NamespacedName, actual); err != nil {
+					t.Fatal(err)
+				}
+				if actual.ResourceVersion != resourceVersion {
+					t.Fatal("unchanged syntax failure unnecessarily rewrote status")
+				}
+			}
 			reject = false
 			blueprint.Spec.GatewayTemplate.ResourceTemplates["output"] = validTemplate
 			if err := fakeClient.cl.Update(ctx, blueprint); err != nil {
