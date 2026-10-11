@@ -46,6 +46,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	ktesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/util/workqueue"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -58,6 +59,44 @@ import (
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/gateway-api/conformance/utils/kubernetes"
 )
+
+func TestDeletingTemplateParents(t *testing.T) {
+	ctx := context.Background()
+	deletedAt := metav1.Now()
+	parentKind := gatewayapi.Kind("Gateway")
+	for _, scenario := range []string{"gateway", "route", "route with deleting gateway"} {
+		t.Run(scenario, func(t *testing.T) {
+			gateway := newTestGateway()
+			gateway.DeletionTimestamp = &deletedAt
+			gateway.Finalizers = []string{"test.tv2.dk/hold"}
+			route := &gatewayapi.HTTPRoute{ObjectMeta: metav1.ObjectMeta{Name: "route", Namespace: gateway.Namespace}, Spec: gatewayapi.HTTPRouteSpec{
+				CommonRouteSpec: gatewayapi.CommonRouteSpec{ParentRefs: []gatewayapi.ParentReference{{Name: gatewayapi.ObjectName(gateway.Name), Kind: &parentKind}}},
+			}}
+			if scenario == "route" {
+				route.DeletionTimestamp = &deletedAt
+				route.Finalizers = []string{"test.tv2.dk/hold"}
+			}
+			fakeClient := newFakeDynClient(gateway, route)
+			for attempt := 0; attempt < 3; attempt++ {
+				var result reconcile.Result
+				var err error
+				if scenario == "gateway" {
+					controller := &GatewayReconciler{client: fakeClient.cl, scheme: fakeClient.scheme, dynClient: fakeClient.dyn}
+					result, err = controller.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(gateway)})
+				} else {
+					controller := &HTTPRouteReconciler{client: fakeClient.cl, scheme: fakeClient.scheme, dynClient: fakeClient.dyn}
+					result, err = controller.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(route)})
+				}
+				if err != nil || result != (reconcile.Result{}) {
+					t.Fatalf("deleting parent should stop reconciliation: result=%v error=%v", result, err)
+				}
+			}
+			if actions := fakeClient.dyn.(interface{ Actions() []ktesting.Action }).Actions(); len(actions) != 0 {
+				t.Fatalf("deleting parent performed child operations: %v", actions)
+			}
+		})
+	}
+}
 
 func TestGatewaysForConfig(t *testing.T) {
 	scheme := runtime.NewScheme()

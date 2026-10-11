@@ -162,6 +162,11 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
+	if !gw.DeletionTimestamp.IsZero() {
+		logger.Info("Gateway is being deleted, skipping reconcile", "gateway", req.NamespacedName)
+		return ctrl.Result{}, nil
+	}
+
 	debugContext = append(debugContext, "gatewayClassName", gw.Spec.GatewayClassName, "namespace", gw.Namespace, "listeners", len(gw.Spec.Listeners))
 
 	gwc, err := lookupGatewayClass(ctx, r, gw.Spec.GatewayClassName)
