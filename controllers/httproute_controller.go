@@ -36,14 +36,19 @@ import (
 	"fmt"
 	"time"
 
+	gwcapi "github.com/tv2/bifrost-gateway-controller/apis/gateway.tv2.dk/v1alpha1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayapi "sigs.k8s.io/gateway-api/apis/v1"
 
 	selfapi "github.com/tv2/bifrost-gateway-controller/pkg/api"
@@ -83,7 +88,33 @@ func NewHTTPRouteController(mgr ctrl.Manager, config *rest.Config) *HTTPRouteRec
 func (r *HTTPRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&gatewayapi.HTTPRoute{}).
+		Watches(&gwcapi.GatewayClassConfig{}, handler.EnqueueRequestsFromMapFunc(r.routesForConfig), builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		Watches(&gwcapi.GatewayConfig{}, handler.EnqueueRequestsFromMapFunc(r.routesForConfig), builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Complete(r)
+}
+
+func (r *HTTPRouteReconciler) routesForConfig(ctx context.Context, object client.Object) []reconcile.Request {
+	gateways := (&GatewayReconciler{client: r.client}).gatewaysForConfig(ctx, object)
+	if len(gateways) == 0 {
+		return nil
+	}
+	routes, err := lookupHTTPRoutes(ctx, r)
+	if err != nil {
+		log.FromContext(ctx).Error(err, "cannot list HTTPRoutes for config change", "config", client.ObjectKeyFromObject(object))
+		return nil
+	}
+	requests := make(map[reconcile.Request]struct{})
+	for _, gateway := range gateways {
+		parent := &gatewayapi.Gateway{ObjectMeta: metav1.ObjectMeta{Name: gateway.Name, Namespace: gateway.Namespace}}
+		for _, route := range filterHTTPRoutesForGateway(parent, routes) {
+			requests[reconcile.Request{NamespacedName: client.ObjectKeyFromObject(route)}] = struct{}{}
+		}
+	}
+	result := make([]reconcile.Request, 0, len(requests))
+	for request := range requests {
+		result = append(result, request)
+	}
+	return result
 }
 
 // Compare values referenced by pointers. Both a and b must be pointers to the same type
