@@ -33,6 +33,7 @@ package controllers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -41,6 +42,7 @@ import (
 	"github.com/mitchellh/mapstructure"
 	gwcapi "github.com/tv2/bifrost-gateway-controller/apis/gateway.tv2.dk/v1alpha1"
 	"k8s.io/apimachinery/pkg/api/equality"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -225,7 +227,13 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	templates, err := parseTemplates(gwcb.Spec.GatewayTemplate.ResourceTemplates)
 	if err != nil {
 		logger.Error(err, "cannot parse templates", debugContext...)
-		return ctrl.Result{}, fmt.Errorf("cannot parse templates: %w", err)
+		failure := fmt.Errorf("cannot parse templates: %w", err)
+		for _, conditionType := range []gatewayapi.GatewayConditionType{gatewayapi.GatewayConditionProgrammed, gatewayapi.GatewayConditionReady} {
+			meta.SetStatusCondition(&gw.Status.Conditions, metav1.Condition{
+				Type: string(conditionType), Status: metav1.ConditionFalse, Reason: "Invalid", Message: failure.Error(), ObservedGeneration: gw.Generation,
+			})
+		}
+		return ctrl.Result{}, errors.Join(failure, r.Client().Status().Update(ctx, &gw))
 	}
 
 	debugContext = append(debugContext, "templateCount", len(templates))
@@ -250,8 +258,13 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 		if err = applyTemplates(ctx, r, &gw, templates); err != nil {
 			logger.Error(err, "unable to apply templates", debugContext...)
-			errStatus = fmt.Errorf("unable to apply templates: %w", err)
 		}
+	}
+	for _, tmpl := range templates {
+		if tmpl.RenderError != nil {
+			errStatus = errors.Join(errStatus, fmt.Errorf("cannot render template %q: %w", tmpl.TemplateName, tmpl.RenderError))
+		}
+		errStatus = errors.Join(errStatus, tmpl.ApplyError)
 	}
 
 	requeue = (renderedNum != existsNum)
@@ -308,12 +321,21 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	progReason := "Pending"
 	progMsg := ""
 	missing := statusExistingTemplates(templates)
-	if len(missing) == 0 { // 'Programmed' when all templates rendered and all resources exist
+	if len(missing) == 0 && errStatus == nil { // 'Programmed' when all templates rendered and all resources exist
 		progStatus = metav1.ConditionTrue
 		progReason = string(gatewayapi.GatewayReasonProgrammed)
-	} else {
+	} else if len(missing) > 0 {
 		sort.Strings(missing)
 		progMsg = fmt.Sprintf("missing %v resources: %s", len(missing), strings.Join(missing, ","))
+	}
+	if errStatus != nil {
+		if apierrors.IsInvalid(errStatus) || apierrors.IsBadRequest(errStatus) {
+			progReason = "Invalid"
+		}
+		if progMsg != "" {
+			progMsg += "; "
+		}
+		progMsg += errStatus.Error()
 	}
 	meta.SetStatusCondition(&gw.Status.Conditions, metav1.Condition{
 		Type:               string(gatewayapi.GatewayConditionProgrammed),
@@ -327,7 +349,7 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	isReady, readyReason, err := statusIsReady(templates)
 	if err != nil {
 		logger.Error(err, "unable to update status condition due to sub-resource status error", "gateway", req.NamespacedName)
-		return ctrl.Result{}, err
+		errStatus = errors.Join(errStatus, err)
 	}
 	logger.V(1).Info("gateway readiness", "gateway", req.NamespacedName, "ready", isReady, "reason", readyReason)
 	if isReady && statusUpdateOK && progStatus == metav1.ConditionTrue {
@@ -337,6 +359,7 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		Type:               string(gatewayapi.GatewayConditionReady), //nolint:staticcheck // "Ready" is reserved for future use
 		Status:             status,
 		Reason:             string(gatewayapi.GatewayReasonReady), //nolint:staticcheck // "Ready" is reserved for future use
+		Message:            progMsg,
 		ObservedGeneration: gw.Generation})
 
 	if !equality.Semantic.DeepEqual(beforeStatusUpdate.Status, gw.Status) {
@@ -346,6 +369,9 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		}
 	}
 
+	if errStatus != nil {
+		return ctrl.Result{}, errStatus
+	}
 	if requeue {
 		if renderedNum != existsNum {
 			logger.Info("requeuing, not all resources available", "renderedNum", renderedNum, "existsNum", existsNum)

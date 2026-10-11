@@ -34,6 +34,7 @@ package controllers
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -80,7 +81,9 @@ type ResourceTemplateState struct {
 	StringTemplate string
 
 	// Resource information, rendered and current
-	Resources []ResourceComposite
+	Resources   []ResourceComposite
+	RenderError error
+	ApplyError  error
 }
 
 // Parameters used when rendering templates
@@ -167,6 +170,7 @@ func renderTemplates(ctx context.Context, r ControllerDynClient, parent metav1.O
 		tmpl := templates[tIdx]
 		if len(tmpl.Resources) == 0 {
 			tmpl.Resources, err = template2Composite(ctx, r, tmpl.Template, values)
+			tmpl.RenderError = err
 			if err != nil {
 				if isFinalAttempt {
 					logger.Error(err, "cannot render template", "templateName", tmpl.TemplateName)
@@ -228,10 +232,12 @@ func buildResourceValues(templates []*ResourceTemplateState) map[string]any {
 func applyTemplates(ctx context.Context, r ControllerDynClient, parent metav1.Object, templates []*ResourceTemplateState) error {
 	var err error
 	var errorCnt = 0
+	var applyErrors []error
 
 	logger := log.FromContext(ctx)
 
 	for _, tmpl := range templates {
+		tmpl.ApplyError = nil
 		for _, res := range tmpl.Resources {
 			if res.Rendered == nil || res.GVR == nil {
 				logger.V(1).Info("skipping unrendered resource", "templateName", tmpl.TemplateName)
@@ -243,12 +249,14 @@ func applyTemplates(ctx context.Context, r ControllerDynClient, parent metav1.Ob
 				if err != nil {
 					logger.Error(err, "cannot set owner for namespaced template", "templateName", tmpl.TemplateName, "resourceName", res.Rendered.GetName())
 					errorCnt++
+					tmpl.ApplyError = errors.Join(tmpl.ApplyError, fmt.Errorf("template %q resource %s %s/%s owner: %w", tmpl.TemplateName, res.Rendered.GetKind(), parent.GetNamespace(), res.Rendered.GetName(), err))
 				} else {
 					ns := parent.GetNamespace()
 					err = patchUnstructured(ctx, r, res.Rendered, res.GVR, &ns)
 					if err != nil {
 						logger.Error(err, "cannot apply namespaced template", "templateName", tmpl.TemplateName, "resourceName", res.Rendered.GetName(), "namespace", ns, "gvr", res.GVR)
 						errorCnt++
+						tmpl.ApplyError = errors.Join(tmpl.ApplyError, fmt.Errorf("template %q resource %s %s/%s: %w", tmpl.TemplateName, res.Rendered.GetKind(), ns, res.Rendered.GetName(), err))
 					} else {
 						logger.V(1).Info("applied namespaced resource", "templateName", tmpl.TemplateName, "resourceName", res.Rendered.GetName(), "namespace", ns, "gvr", res.GVR)
 					}
@@ -258,15 +266,17 @@ func applyTemplates(ctx context.Context, r ControllerDynClient, parent metav1.Ob
 				if err != nil {
 					logger.Error(err, "cannot apply cluster-scoped template", "templateName", tmpl.TemplateName, "resourceName", res.Rendered.GetName(), "gvr", res.GVR)
 					errorCnt++
+					tmpl.ApplyError = errors.Join(tmpl.ApplyError, fmt.Errorf("template %q resource %s %s: %w", tmpl.TemplateName, res.Rendered.GetKind(), res.Rendered.GetName(), err))
 				} else {
 					logger.V(1).Info("applied cluster-scoped resource", "templateName", tmpl.TemplateName, "resourceName", res.Rendered.GetName(), "gvr", res.GVR)
 				}
 			}
 		}
+		applyErrors = append(applyErrors, tmpl.ApplyError)
 	}
 
 	if errorCnt > 0 {
-		return fmt.Errorf("found %v problems while applying %v templates", errorCnt, len(templates))
+		return fmt.Errorf("found %v problems while applying %v templates: %w", errorCnt, len(templates), errors.Join(applyErrors...))
 	}
 	return nil
 }
