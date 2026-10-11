@@ -39,17 +39,24 @@ import (
 	"time"
 
 	"github.com/mitchellh/mapstructure"
+	gwcapi "github.com/tv2/bifrost-gateway-controller/apis/gateway.tv2.dk/v1alpha1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayapi "sigs.k8s.io/gateway-api/apis/v1"
+	gatewayv1a2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
 )
 
 // Used to requeue when a resource is missing a dependency
@@ -90,7 +97,52 @@ func NewGatewayController(mgr ctrl.Manager, config *rest.Config) *GatewayReconci
 func (r *GatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&gatewayapi.Gateway{}).
+		Watches(&gwcapi.GatewayClassConfig{}, handler.EnqueueRequestsFromMapFunc(r.gatewaysForConfig), builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		Watches(&gwcapi.GatewayConfig{}, handler.EnqueueRequestsFromMapFunc(r.gatewaysForConfig), builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Complete(r)
+}
+
+func (r *GatewayReconciler) gatewaysForConfig(ctx context.Context, object client.Object) []reconcile.Request {
+	var target gatewayv1a2.NamespacedPolicyTargetReference
+	global := false
+	switch config := object.(type) {
+	case *gwcapi.GatewayClassConfig:
+		target = config.Spec.TargetRef
+		global = config.Namespace == ControllerNamespace && target.Kind == "GatewayClass" && target.Group == gatewayapi.GroupName
+	case *gwcapi.GatewayConfig:
+		target = config.Spec.TargetRef
+	default:
+		return nil
+	}
+
+	var gateways gatewayapi.GatewayList
+	var options []client.ListOption
+	if !global {
+		options = append(options, client.InNamespace(object.GetNamespace()))
+	}
+	if err := r.Client().List(ctx, &gateways, options...); err != nil {
+		log.FromContext(ctx).Error(err, "cannot list Gateways for config change", "config", client.ObjectKeyFromObject(object))
+		return nil
+	}
+
+	var requests []reconcile.Request
+	for _, gateway := range gateways.Items {
+		matches := false
+		switch {
+		case target.Group == gatewayapi.GroupName && target.Kind == "GatewayClass":
+			_, isClassConfig := object.(*gwcapi.GatewayClassConfig)
+			matches = isClassConfig && string(gateway.Spec.GatewayClassName) == string(target.Name)
+		case target.Group == "" && target.Kind == "Namespace":
+			matches = gateway.Namespace == string(target.Name)
+		case target.Group == gatewayapi.GroupName && target.Kind == "Gateway":
+			_, isGatewayConfig := object.(*gwcapi.GatewayConfig)
+			matches = isGatewayConfig && gateway.Name == string(target.Name) && (target.Namespace == nil || string(*target.Namespace) == gateway.Namespace)
+		}
+		if matches {
+			requests = append(requests, reconcile.Request{NamespacedName: types.NamespacedName{Namespace: gateway.Namespace, Name: gateway.Name}})
+		}
+	}
+	return requests
 }
 
 func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
