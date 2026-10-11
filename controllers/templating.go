@@ -74,6 +74,9 @@ type ResourceTemplateState struct {
 	// Compiled template
 	Template *template.Template
 
+	RenderError error
+	ApplyError  error
+
 	// Name of template (from template key in GatewayClassBlueprint, not Kubernetes resource name)
 	TemplateName string
 
@@ -81,9 +84,7 @@ type ResourceTemplateState struct {
 	StringTemplate string
 
 	// Resource information, rendered and current
-	Resources   []ResourceComposite
-	RenderError error
-	ApplyError  error
+	Resources []ResourceComposite
 }
 
 // Parameters used when rendering templates
@@ -232,7 +233,7 @@ func buildResourceValues(templates []*ResourceTemplateState) map[string]any {
 func applyTemplates(ctx context.Context, r ControllerDynClient, parent metav1.Object, templates []*ResourceTemplateState) error {
 	var err error
 	var errorCnt = 0
-	var applyErrors []error
+	applyErrors := make([]error, 0, len(templates))
 
 	logger := log.FromContext(ctx)
 
