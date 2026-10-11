@@ -263,27 +263,8 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	tmplStr, found := gwcb.Spec.GatewayTemplate.Status["template"]
 	statusUpdateOK := true
 	if found {
-		statusUpdateOK = false
 		templateValues.Resources = buildResourceValues(templates) // Needed in case of a single-pass render loop above
-		if tmpl, errs := parseSingleTemplate("status", tmplStr); errs != nil {
-			logger.Error(errs, "unable to parse status template", "gateway", req.NamespacedName)
-		} else {
-			if statusMap, errs := template2maps(ctx, tmpl, &templateValues); errs != nil {
-				logger.Info("status template not yet renderable, requeuing", "gateway", req.NamespacedName, "error", errs)
-			} else {
-				gw.Status.Addresses = []gatewayapi.GatewayStatusAddress{}
-				_, found := statusMap[0]["addresses"] // FIXME, more addresses?
-				if found {
-					addresses := statusMap[0]["addresses"]
-					if errs := mapstructure.Decode(addresses, &gw.Status.Addresses); errs != nil {
-						// This is probably not a temporary error
-						logger.Error(errs, "unable to decode status data", "gateway", req.NamespacedName)
-					} else {
-						statusUpdateOK = true
-					}
-				}
-			}
-		}
+		statusUpdateOK = updateGatewayAddresses(ctx, &gw, tmplStr, &templateValues)
 	}
 	if !statusUpdateOK {
 		requeue = true
@@ -375,6 +356,31 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 	logger.Info("reconcile completed successfully", "gateway", req.NamespacedName)
 	return ctrl.Result{}, errStatus
+}
+
+func updateGatewayAddresses(ctx context.Context, gw *gatewayapi.Gateway, statusTemplate string, values *TemplateValues) bool {
+	logger := log.FromContext(ctx)
+	gatewayKey := client.ObjectKeyFromObject(gw)
+	tmpl, err := parseSingleTemplate("status", statusTemplate)
+	if err != nil {
+		logger.Error(err, "unable to parse status template", "gateway", gatewayKey)
+		return false
+	}
+	statusMap, err := template2maps(ctx, tmpl, values)
+	if err != nil {
+		logger.Info("status template not yet renderable, requeuing", "gateway", gatewayKey, "error", err)
+		return false
+	}
+	gw.Status.Addresses = []gatewayapi.GatewayStatusAddress{}
+	addresses, found := statusMap[0]["addresses"]
+	if !found {
+		return false
+	}
+	if err := mapstructure.Decode(addresses, &gw.Status.Addresses); err != nil {
+		logger.Error(err, "unable to decode status data", "gateway", gatewayKey)
+		return false
+	}
+	return true
 }
 
 // Calculate union and intersection of Hostnames for use in templates.
