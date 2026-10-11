@@ -228,10 +228,14 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	if err != nil {
 		logger.Error(err, "cannot parse templates", debugContext...)
 		failure := fmt.Errorf("cannot parse templates: %w", err)
+		beforeFailureStatus := gw.DeepCopy()
 		for _, conditionType := range []gatewayapi.GatewayConditionType{gatewayapi.GatewayConditionProgrammed, gatewayapi.GatewayConditionReady} {
 			meta.SetStatusCondition(&gw.Status.Conditions, metav1.Condition{
 				Type: string(conditionType), Status: metav1.ConditionFalse, Reason: "Invalid", Message: failure.Error(), ObservedGeneration: gw.Generation,
 			})
+		}
+		if equality.Semantic.DeepEqual(beforeFailureStatus.Status, gw.Status) {
+			return ctrl.Result{}, failure
 		}
 		return ctrl.Result{}, errors.Join(failure, r.Client().Status().Update(ctx, &gw))
 	}
