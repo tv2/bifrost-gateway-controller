@@ -35,6 +35,7 @@ import (
 	"context"
 	"regexp"
 	"sort"
+	"testing"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -43,12 +44,132 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/workqueue"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayapi "sigs.k8s.io/gateway-api/apis/v1"
+	gatewayv1a2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
 
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/gateway-api/conformance/utils/kubernetes"
 )
+
+func TestGatewaysForConfig(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := gatewayapi.Install(scheme); err != nil {
+		t.Fatal(err)
+	}
+	gateways := []client.Object{
+		&gatewayapi.Gateway{ObjectMeta: metav1.ObjectMeta{Name: "first", Namespace: "tenant-a"}, Spec: gatewayapi.GatewaySpec{GatewayClassName: "class-a"}},
+		&gatewayapi.Gateway{ObjectMeta: metav1.ObjectMeta{Name: "second", Namespace: "tenant-a"}, Spec: gatewayapi.GatewaySpec{GatewayClassName: "class-b"}},
+		&gatewayapi.Gateway{ObjectMeta: metav1.ObjectMeta{Name: "first", Namespace: "tenant-b"}, Spec: gatewayapi.GatewaySpec{GatewayClassName: "class-a"}},
+	}
+	targetNamespace := gatewayapi.Namespace("tenant-b")
+	tests := []struct {
+		name      string
+		namespace string
+		class     bool
+		target    gatewayv1a2.NamespacedPolicyTargetReference
+		want      []string
+	}{
+		{name: "global class", namespace: ControllerNamespace, class: true, target: gatewayv1a2.NamespacedPolicyTargetReference{Group: gatewayapi.GroupName, Kind: "GatewayClass", Name: "class-a"}, want: []string{"tenant-a/first", "tenant-b/first"}},
+		{name: "local class", namespace: "tenant-a", class: true, target: gatewayv1a2.NamespacedPolicyTargetReference{Group: gatewayapi.GroupName, Kind: "GatewayClass", Name: "class-a"}, want: []string{"tenant-a/first"}},
+		{name: "class namespace", namespace: "tenant-a", class: true, target: gatewayv1a2.NamespacedPolicyTargetReference{Kind: "Namespace", Name: "tenant-a"}, want: []string{"tenant-a/first", "tenant-a/second"}},
+		{name: "gateway namespace", namespace: "tenant-a", target: gatewayv1a2.NamespacedPolicyTargetReference{Kind: "Namespace", Name: "tenant-a"}, want: []string{"tenant-a/first", "tenant-a/second"}},
+		{name: "named gateway", namespace: "tenant-a", target: gatewayv1a2.NamespacedPolicyTargetReference{Group: gatewayapi.GroupName, Kind: "Gateway", Name: "first"}, want: []string{"tenant-a/first"}},
+		{name: "cross namespace ignored", namespace: "tenant-a", target: gatewayv1a2.NamespacedPolicyTargetReference{Group: gatewayapi.GroupName, Kind: "Gateway", Name: "first", Namespace: &targetNamespace}},
+		{name: "wrong namespace target", namespace: "tenant-a", target: gatewayv1a2.NamespacedPolicyTargetReference{Kind: "Namespace", Name: "tenant-b"}},
+		{name: "wrong group", namespace: "tenant-a", target: gatewayv1a2.NamespacedPolicyTargetReference{Group: "example.com", Kind: "Gateway", Name: "first"}},
+		{name: "gateway config cannot target class", namespace: "tenant-a", target: gatewayv1a2.NamespacedPolicyTargetReference{Group: gatewayapi.GroupName, Kind: "GatewayClass", Name: "class-a"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			reconciler := &GatewayReconciler{client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(gateways...).Build()}
+			var config client.Object = &gwcapi.GatewayConfig{ObjectMeta: metav1.ObjectMeta{Namespace: test.namespace}, Spec: gwcapi.GatewayConfigSpec{TargetRef: test.target}}
+			if test.class {
+				config = &gwcapi.GatewayClassConfig{ObjectMeta: metav1.ObjectMeta{Namespace: test.namespace}, Spec: gwcapi.GatewayClassConfigSpec{TargetRef: test.target}}
+			}
+			var got []string
+			for _, request := range reconciler.gatewaysForConfig(context.Background(), config) {
+				got = append(got, request.Namespace+"/"+request.Name)
+			}
+			sort.Strings(got)
+			if len(got) != len(test.want) {
+				t.Fatalf("requests = %v, want %v", got, test.want)
+			}
+			for index := range got {
+				if got[index] != test.want[index] {
+					t.Fatalf("requests = %v, want %v", got, test.want)
+				}
+			}
+		})
+	}
+}
+
+func TestRoutesForConfig(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := gatewayapi.Install(scheme); err != nil {
+		t.Fatal(err)
+	}
+	parentNamespace := gatewayapi.Namespace("tenant")
+	objects := []client.Object{
+		&gatewayapi.Gateway{ObjectMeta: metav1.ObjectMeta{Name: "first", Namespace: "tenant"}, Spec: gatewayapi.GatewaySpec{GatewayClassName: "class"}},
+		&gatewayapi.Gateway{ObjectMeta: metav1.ObjectMeta{Name: "second", Namespace: "tenant"}, Spec: gatewayapi.GatewaySpec{GatewayClassName: "class"}},
+		&gatewayapi.HTTPRoute{ObjectMeta: metav1.ObjectMeta{Name: "both", Namespace: "tenant"}, Spec: gatewayapi.HTTPRouteSpec{CommonRouteSpec: gatewayapi.CommonRouteSpec{ParentRefs: []gatewayapi.ParentReference{{Name: "first"}, {Name: "second"}}}}},
+		&gatewayapi.HTTPRoute{ObjectMeta: metav1.ObjectMeta{Name: "cross", Namespace: "other"}, Spec: gatewayapi.HTTPRouteSpec{CommonRouteSpec: gatewayapi.CommonRouteSpec{ParentRefs: []gatewayapi.ParentReference{{Name: "first", Namespace: &parentNamespace}}}}},
+		&gatewayapi.HTTPRoute{ObjectMeta: metav1.ObjectMeta{Name: "unrelated", Namespace: "other"}, Spec: gatewayapi.HTTPRouteSpec{CommonRouteSpec: gatewayapi.CommonRouteSpec{ParentRefs: []gatewayapi.ParentReference{{Name: "first"}}}}},
+	}
+	reconciler := &HTTPRouteReconciler{client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()}
+	config := &gwcapi.GatewayConfig{ObjectMeta: metav1.ObjectMeta{Namespace: "tenant"}, Spec: gwcapi.GatewayConfigSpec{TargetRef: gatewayv1a2.NamespacedPolicyTargetReference{Kind: "Namespace", Name: "tenant"}}}
+	var got []string
+	for _, request := range reconciler.routesForConfig(context.Background(), config) {
+		got = append(got, request.Namespace+"/"+request.Name)
+	}
+	sort.Strings(got)
+	if len(got) != 2 || got[0] != "other/cross" || got[1] != "tenant/both" {
+		t.Fatalf("requests = %v, want [other/cross tenant/both]", got)
+	}
+}
+
+func TestConfigEventMapping(t *testing.T) {
+	oldConfig := &gwcapi.GatewayConfig{ObjectMeta: metav1.ObjectMeta{Name: "policy", Namespace: "tenant"}, Spec: gwcapi.GatewayConfigSpec{TargetRef: gatewayv1a2.NamespacedPolicyTargetReference{Name: "old"}}}
+	newConfig := oldConfig.DeepCopy()
+	newConfig.Spec.TargetRef.Name = "new"
+	eventHandler := handler.EnqueueRequestsFromMapFunc(func(_ context.Context, object client.Object) []reconcile.Request {
+		config := object.(*gwcapi.GatewayConfig)
+		return []reconcile.Request{{NamespacedName: types.NamespacedName{Namespace: config.Namespace, Name: string(config.Spec.TargetRef.Name)}}}
+	})
+	tests := []struct {
+		name string
+		emit func(workqueue.TypedRateLimitingInterface[reconcile.Request])
+		want int
+	}{
+		{name: "create", emit: func(queue workqueue.TypedRateLimitingInterface[reconcile.Request]) {
+			eventHandler.Create(context.Background(), event.CreateEvent{Object: oldConfig}, queue)
+		}, want: 1},
+		{name: "retarget update", emit: func(queue workqueue.TypedRateLimitingInterface[reconcile.Request]) {
+			eventHandler.Update(context.Background(), event.UpdateEvent{ObjectOld: oldConfig, ObjectNew: newConfig}, queue)
+		}, want: 2},
+		{name: "delete", emit: func(queue workqueue.TypedRateLimitingInterface[reconcile.Request]) {
+			eventHandler.Delete(context.Background(), event.DeleteEvent{Object: oldConfig}, queue)
+		}, want: 1},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			queue := workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[reconcile.Request]())
+			defer queue.ShutDown()
+			test.emit(queue)
+			if queue.Len() != test.want {
+				t.Fatalf("queued %d requests, want %d", queue.Len(), test.want)
+			}
+		})
+	}
+}
 
 // ------------------------------------
 // Test Helpers

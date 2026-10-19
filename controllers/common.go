@@ -53,6 +53,11 @@ import (
 	selfapi "github.com/tv2/bifrost-gateway-controller/pkg/api"
 )
 
+const (
+	gatewayClassKind = "GatewayClass"
+	namespaceKind    = "Namespace"
+)
+
 var (
 	// The namespace the controller will watch for global policies
 	ControllerNamespace string
@@ -214,7 +219,7 @@ func lookupValues(ctx context.Context, r ControllerClient, gatewayClassName stri
 	var gwccGlobalGroup []*gwcapi.GatewayClassConfig
 	for idx := range gwccGlobal.Items {
 		gwcc := &gwccGlobal.Items[idx]
-		if gwcc.Spec.TargetRef.Kind == "GatewayClass" &&
+		if gwcc.Spec.TargetRef.Kind == gatewayClassKind &&
 			gwcc.Spec.TargetRef.Group == gatewayapi.GroupName &&
 			string(gwcc.Spec.TargetRef.Name) == gatewayClassName {
 			gwccGlobalGroup = append(gwccGlobalGroup, gwcc)
@@ -226,7 +231,7 @@ func lookupValues(ctx context.Context, r ControllerClient, gatewayClassName stri
 	var gwccNsGroup []*gwcapi.GatewayClassConfig
 	for idx := range gwccLocal.Items {
 		gwcc := &gwccLocal.Items[idx]
-		if gwcc.Spec.TargetRef.Kind == "Namespace" &&
+		if gwcc.Spec.TargetRef.Kind == namespaceKind &&
 			gwcc.Spec.TargetRef.Group == "" &&
 			string(gwcc.Spec.TargetRef.Name) == gwNamespace {
 			gwccNsGroup = append(gwccNsGroup, gwcc)
@@ -238,7 +243,7 @@ func lookupValues(ctx context.Context, r ControllerClient, gatewayClassName stri
 	var gwccLocalGwcGroup []*gwcapi.GatewayClassConfig
 	for idx := range gwccLocal.Items {
 		gwcc := &gwccLocal.Items[idx]
-		if gwcc.Spec.TargetRef.Kind == "GatewayClass" &&
+		if gwcc.Spec.TargetRef.Kind == gatewayClassKind &&
 			gwcc.Spec.TargetRef.Group == gatewayapi.GroupName &&
 			string(gwcc.Spec.TargetRef.Name) == gatewayClassName {
 			gwccLocalGwcGroup = append(gwccLocalGwcGroup, gwcc)
@@ -255,7 +260,7 @@ func lookupValues(ctx context.Context, r ControllerClient, gatewayClassName stri
 	var gwcNsGroup []*gwcapi.GatewayConfig
 	for idx := range gwcLocal.Items {
 		gwc := &gwcLocal.Items[idx]
-		if gwc.Spec.TargetRef.Kind == "Namespace" &&
+		if gwc.Spec.TargetRef.Kind == namespaceKind &&
 			gwc.Spec.TargetRef.Group == "" &&
 			string(gwc.Spec.TargetRef.Name) == gwNamespace {
 			gwcNsGroup = append(gwcNsGroup, gwc)
