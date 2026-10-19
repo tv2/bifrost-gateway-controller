@@ -188,6 +188,11 @@ func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
+	if !rt.DeletionTimestamp.IsZero() {
+		logger.Info("HTTPRoute is being deleted, skipping reconcile", "httproute", req.NamespacedName)
+		return ctrl.Result{}, nil
+	}
+
 	logger.Info("reconcile started", "httproute", req.NamespacedName, "parentRefs", len(rt.Spec.ParentRefs))
 
 	// Prepare HTTPRoute resource for use in templates by converting to map[string]any
@@ -221,6 +226,11 @@ func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		if err != nil {
 			logger.Info("gateway for HTTPRoute not found, requeuing", "httproute", rt.Name, "parentGateway", parent.Name)
 			requeue = true
+			continue
+		}
+
+		if !gw.DeletionTimestamp.IsZero() {
+			logger.Info("parent Gateway is being deleted, skipping parent", "parentGateway", parent.Name)
 			continue
 		}
 
