@@ -6,7 +6,7 @@ require (
 	github.com/Masterminds/sprig/v3 v3.3.0
 	github.com/mitchellh/mapstructure v1.5.0
 	github.com/onsi/ginkgo/v2 v2.28.2
-	github.com/onsi/gomega v1.39.1
+	github.com/onsi/gomega v1.41.0
 	github.com/prometheus/client_golang v1.23.2
 	k8s.io/api v0.35.4
 	k8s.io/apiextensions-apiserver v0.35.4
