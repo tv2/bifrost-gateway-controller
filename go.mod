@@ -5,8 +5,8 @@ go 1.26.0
 require (
 	github.com/Masterminds/sprig/v3 v3.3.0
 	github.com/mitchellh/mapstructure v1.5.0
-	github.com/onsi/ginkgo/v2 v2.28.2
-	github.com/onsi/gomega v1.39.1
+	github.com/onsi/ginkgo/v2 v2.33.1
+	github.com/onsi/gomega v1.40.0
 	github.com/prometheus/client_golang v1.24.0
 	k8s.io/api v0.37.0
 	k8s.io/apiextensions-apiserver v0.37.0
@@ -49,7 +49,7 @@ require (
 	github.com/go-task/slim-sprig/v3 v3.0.0 // indirect
 	github.com/google/gnostic-models v0.7.0 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
-	github.com/google/pprof v0.0.0-20260115054156-294ebfa9ad83 // indirect
+	github.com/google/pprof v0.0.0-20260402051712-545e8a4df936 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674 // indirect
 	github.com/huandu/xstrings v1.5.0 // indirect
