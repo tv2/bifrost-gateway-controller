@@ -104,7 +104,3 @@ type GatewayClassBlueprintList struct {
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []GatewayClassBlueprint `json:"items"`
 }
-
-func init() {
-	SchemeBuilder.Register(&GatewayClassBlueprint{}, &GatewayClassBlueprintList{})
-}
