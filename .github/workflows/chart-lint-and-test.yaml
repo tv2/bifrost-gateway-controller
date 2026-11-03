@@ -43,7 +43,7 @@ jobs:
         run: devbox run -- ct lint --config ./.github/configs/ct-lint.yaml
 
       - name: Create kind cluster
-        uses: helm/kind-action@v1.15.1
+        uses: helm/kind-action@1544676c07bb3570fcb70166beaa07c4528fd4aa # v1.15.1
         if: steps.list-changed.outputs.changed == 'true'
 
       - name: Run chart-testing (install)
