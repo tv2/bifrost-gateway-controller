@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # tag=v7
         with:
           fetch-depth: 0
 
@@ -43,7 +43,7 @@ jobs:
         run: devbox run -- ct lint --config ./.github/configs/ct-lint.yaml
 
       - name: Create kind cluster
-        uses: helm/kind-action@v1.15.1
+        uses: helm/kind-action@1544676c07bb3570fcb70166beaa07c4528fd4aa # tag=v1.15.1
         if: steps.list-changed.outputs.changed == 'true'
 
       - name: Run chart-testing (install)
